@@ -4,6 +4,12 @@
 BeginPackage["Calme`"];
 
 
+(*just add a comment*)
+
+
+Today
+
+
 (* ::Code::Initialization::GrayLevel[0]:: *)
 Unprotect["Calme`*"];
 ClearAll["Calme`*"];
@@ -12,9 +18,6 @@ ClearAll["Calme`Private`*"];
 
 (* ::Subsection:: *)
 (*a few init functions before the definitions to run on startup*)
-
-
-NiceGrid := ResourceFunction["NiceGrid"]
 
 
 (* ::Code::Initialization::GrayLevel[0]:: *)
@@ -72,8 +75,6 @@ OpenAllInputsCells::usage="good for demo. Open all inputs";
 testListAssociation::usage="quick peek at keys, dimensions or contents of the variable, depending on type and size";
 colorGrads::usage="default color gradients with their namelabels for use with the ColorFunction";
 niceMatrixPlot::usage="autoscales chosen colorbar onto the range of data, and shows the colorbar";
-$::usage="echoes a function inserted into // pipeline";
-$$::usage="pass through function. Doesn't enact anything in square brackets, but let's the value move forward down the monad.";
 physicalTicks::usage="provides an array of {i,tick[i]} for use in labeling array ticks";
 fitFunc1D::usage="helper function for 1D fitting. Strict requirement on formatting. See header for details";
 assignSymbol::usage="assign value to symbol expressed by string";
@@ -90,7 +91,6 @@ attachX::usage="returns association with 'xx' field, either occupied by e.g. 'sw
 kill::usage="terminate after n seconds -> first parameter";
 head::usage="preview a structure by showing first n members (n can be negative -> tail)"
 headRandom::usage="preview a structure by showing n Random  members (n can only be positive)"
-
 
 
 (* ::Subsection:: *)
@@ -136,7 +136,7 @@ removeSpikes::usage = "remove spikes from spectra with quantile regression";
 
 
 tickScale::usage="rescale ticks after Show, using Show[plotHandle,Ticks->{tickScale[plotHandle,factor],Automatic}] for example";
-ticks::usage="explicit definition of ticks and subticks. Insert in instead of Automatic into ticklabels";
+ticks::usage="explicit definition of  and subticks. Insert in instead of Automatic into ticklabels";
 
 
 (* ::Subsection:: *)
@@ -154,37 +154,50 @@ parseSMIM::usage="parse a SMIM-containing h5 file from Asylum as recorded by Stu
 splitTrainValidate::usage = "split a list of data (any kind) into train/validate portions";
 
 
+(* ::Subsection:: *)
+(*h5 functionality*)
+
+
+saveH5::usage = "export expression to hname file on specific path. Default overwrite";
+recallH5::usage = "overloaded function to pull variables out of h5 files";
+readH5saveSVG::usage = "overloaded function to pull figures and lists of figures from h5 files (dedicated!)
+  and save them as svg in the same folder";
+
+
+(* ::Section:: *)
+(*Begin definitions*)
+
+
 (* ::Code::Initialization::GrayLevel[0]:: *)
 Begin["`Private`"];
+
+
+(* ::Subsection:: *)
+(*on startup*)
+
+
+NiceGrid := ResourceFunction["NiceGrid"]
+CombinePlots := ResourceFunction["CombinePlots"]
+dump := (DumpSave[NotebookFileName[]<>".mx","Global`"]; Print["saved"];)
+recall := (Get[NotebookFileName[]<>".mx","Global`"]; Print["recalled"];)
+dumpVars := Block[{vars}, (
+	vars = Position[(Head@Symbol[#])&/@Names["Global`*"],_?(MatchQ[#,List]||MatchQ[#,Association]&)]//Flatten;
+	Export[NotebookFileName[]<>"vars.mx",Symbol[#]&/@Part[Names["Global`*"],vars],"MX"]
+	)];
+initNB[];
+plotStyle[] := Block[{},{BaseStyle->Directive[FontFamily->"Sansa",FontSize->18], Axes->False, Frame->True, FrameStyle->Directive[ Thickness[0.002]],ImageSize->500,PlotRange->All}];
+plotStyle[xlabel_?StringQ, ylabel_?StringQ] := Block[{},{BaseStyle->Directive[FontFamily->"Sansa",FontSize->18], Axes->False, Frame->True, FrameStyle->Directive[ Thickness[0.002]],ImageSize->500,PlotRange->All,
+FrameLabel->{xlabel,ylabel}}];
+x_\[DoubleLongRightArrow]y_:=Map[x,y];
 
 
 (* ::Subsection:: *)
 (*mini-monadic functionality*)
 
 
-SetAttributes[$,HoldAll];
-x_ \[DoubleLongRightArrow]y_:=x//(EchoFunction[y][#]&);
-x_ \[DoubleLongRightArrow]$[y_]:=x//y;
-x_\[DoubleLongRightArrow]y_\[DoubleLongRightArrow]z__ :=(x//(EchoFunction[y][#]&))\[DoubleLongRightArrow]z;
-x_\[DoubleLongRightArrow]$[y_]\[DoubleLongRightArrow]z__ :=(x//y)\[DoubleLongRightArrow]z;
-
-
-
 kill[t_:10][expr_] := TimeConstrained[expr,t];
 head[expr_, num_:5] := Take[expr,num];
 headRandom[expr_, num_:5] := RandomSample[expr,num];
-
-
-(*x_ \[DoubleLongRightArrow]y_:=x//y;
-x_\[DoubleLongRightArrow]y_\[DoubleLongRightArrow]z__ :=(x//y)\[DoubleLongRightArrow]z;*)
-
-(*functions below are activated if  defintions of \[DoubleLongRightArrow] above are used
-SetAttributes[$,HoldAll];
-$[func_]:=(EchoFunction[func][#])&; (*this one automatically returns #*)
-$[func_,res_?AssociationQ]:=(EchoFunction[AssociateTo[res,ToString@(Length@res+1)-> func@#]][#]&);
-$[func_,res_?AssociationQ, key_?StringQ]:=(AssociateTo[res, key-> Echo@func@#];#)&;
-$$[___]=(#)&; (*Pass through function for the mini-Monadic*)
-*)
 
 
 (* ::Subsection:: *)
@@ -209,6 +222,7 @@ assc)
 (*reporting functionality*)
 
 
+(*these need to be moved to HTML webpages too*)
 reportCore[grd_?AssociationQ]:=
 	Block[{attrs=grd["header"]},
 	(attrs["bias"] = {Min@#, Max@#}&@grd["sweep_signal"];
@@ -359,23 +373,59 @@ adjustPlot[plot_Graphics,styles_List,op:OptionsPattern[Graphics]]:=Module[{x=sty
 
 
 
-CloseAllInputsCells[]:=Module[{nb,cells},nb=EvaluationNotebook[];
-		cells=Cells[nb,CellStyle->"Input"];
-		SetOptions[#,CellOpen->False]&/@cells;];
-OpenAllInputsCells[]:=Module[{nb,cells},nb=EvaluationNotebook[];
-		cells=Cells[nb,CellStyle->"Input"];
-		SetOptions[#,CellOpen->True]&/@cells;];
+(* ::Section:: *)
+(*h5 functionality*)
 
 
-(* ::Subsection:: *)
-(*run on startup*)
+saveH5[hname_?StringQ, path_?StringQ, expr_?StringQ]:=Export[hname,{
+path->expr},OverwriteTarget->"Append", "AppendMode"->"Overwrite"];
+
+saveH5[saveFile_:NotebookFileName[] <>".h5"]:=Block[{names, kernAssc},
+	names = Names["Global`*"]//Pick[#,ByteCount[Symbol@#]&/@#,_?(#>1000&)]&;
+	kernAssc =Compress/@AssociationMap[Symbol@#&,names];
+	Export[saveFile,Normal@kernAssc,OverwriteTarget->"Append", "AppendMode"->"Overwrite"];
+	Echo["saved in " <> saveFile];
+	]
 
 
-initNB[];
-Needs["HierarchicalClustering`"];
+recallH5[h5file_?StringQ,varnames_,path:"/vars/"]:=Block[{vars},(
+vars = If[MatchQ[Head@varnames,List],varnames,{varnames}];
+
+Map[(Echo@#;ToExpression[Last@StringSplit[#,"/"],
+		InputForm,Function[name,name=Uncompress@Import[h5file,(path <> #)],HoldAll]])&,
+		vars]
+)];
+
+recallH5[h5file_?StringQ]:=Block[{varnames, vardata},
+varnames = Import[h5file];
+vardata = Quiet@Map[Check[Uncompress@Import[h5file,#]&,Echo@"err"],varnames];
+MapThread[ToExpression[Last@StringSplit[#1,"/"],InputForm,Function[name,name=#2,HoldAll]]&,{varnames,vardata}];
+Echo@varnames;
+];
+
+recallH5[]:=Block[{varnames, vardata, h5file=NotebookFileName[] <>".h5"},
+varnames = Import[h5file];
+vardata = Quiet@Map[Check[Uncompress@Import[h5file,#]&,Echo@"err"],varnames];
+MapThread[ToExpression[Last@StringSplit[#1,"/"],InputForm,Function[name,name=#2,HoldAll]]&,{varnames,vardata}];
+Echo@varnames;
+];
 
 
-plotStyle[] := Block[{},{BaseStyle->Directive[FontFamily->"Sansa",FontSize->18], Axes->False, Frame->True, FrameStyle->Directive[ Thickness[0.002]],ImageSize->500,PlotRange->All}];
+readH5saveSVG[h5name_]:=Block[{paths},
+paths = Import[h5name];
+readH5saveSVG[h5name,#]&/@paths;
+];
+
+readH5saveSVG[h5name_,path_]:=Block[{figObj, savedir},
+savedir = DirectoryName@h5name;
+figObj = Import[h5name,path]//Uncompress;
+Switch[
+Head@figObj,
+Graphics, (Echo@Export[DirectoryName@h5name <>Last@StringSplit[path,"/"]<>".svg",figObj, ImageResolution->300];),
+List, (MapIndexed[Echo@Export[DirectoryName@h5name <>Last@StringSplit[path,"/"]<>ToString@First@#2<>".svg",
+#1, ImageResolution->300]&, figObj];)
+]
+];
 
 
 (* ::Section::GrayLevel[0]:: *)
@@ -805,6 +855,7 @@ ListDensityPlot3D[#,ColorFunction->"TemperatureMap",PlotLegends->Automatic,Opaci
 hierarchy[data_?NumericArrayQ, trunc_:{1,Infinity}]:=Module[
 {logDm,newDm,ub,res=<||>},
 {
+Needs["HierarchicalClustering`"];
 (*agglomerate with defulat default distance function*)
 ub = Echo@If[MatchQ[#,Infinity],Length@data,#]&@Last@trunc;
 res["hCluster"] = HierarchicalClustering`DirectAgglomerate[System`DistanceMatrix[Normal@data],Range@Length@data];
