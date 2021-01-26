@@ -1,10 +1,16 @@
 (* ::Package:: *)
 
+AppendTo[$Path,NotebookDirectory[]];
+
+
 (* ::Code::Initialization::GrayLevel[0]:: *)
-BeginPackage["Calme`"];
+BeginPackage["Calme`",{"ExtFunc`","OOP`"}];
 
 
-(*just add a comment*)
+NotebookDirectory[]
+
+
+NotebookFileName[]
 
 
 Today
@@ -31,12 +37,11 @@ bedOfNails::usage = "Bed of nails function with xp, yp -> spacings, and sz -> si
 showFFT::usage = "Quick! Show me fftshifted FFT magnitude";
 randomCheck::usage = "Is this still alive?";
 baseFFT::usage = "FFT amplitude with default Hann window filtering";
-parse3DS::usage = "eke out 3ds into WL. Funnel bias and channels into association";
-parseSXM::usage = "eke out sxm into WL. Funnel channels into association";
 JsonImport::usage="ZImport[\"file.json\"] will import a compressed Mathematica expression from file.json.";
 JsonExport::usage="ZExport[\"file.json\", data] will export data as a compressed Mathematica expression to file.json.";
 todaysDate::usage="returns 2019-01-01 type of string";
-saveDump::usage = "buttons to push and save kernel";
+saveState::usage = "save variables and the notebook itself";
+getState::usage = "recover saved variables and the notebook itself";
 initNB::usage="commands to initate styling and other features in the notebook";
 singleSpectraViz::usage="pick and look and spectra with a 2D slider";
 singleSpectraMapper::usage="pick and look and spectra with a z-image of the soiurce area";
@@ -87,10 +92,22 @@ differentiate::usage="curried function for tunable differentiation (via \[Sigma]
 plotStyle::usage="default rescale of labels and line thicknesses on the plot";
 readDat::usage="import single dat file";
 NiceGridDark::usage="version of NiceGrid optimized for dark background";
-attachX::usage="returns association with 'xx' field, either occupied by e.g. 'sweep_signal' or Range@Last@Dimensions default";
 kill::usage="terminate after n seconds -> first parameter";
-head::usage="preview a structure by showing first n members (n can be negative -> tail)"
-headRandom::usage="preview a structure by showing n Random  members (n can only be positive)"
+head::usage="preview a structure by showing first n members (n can be negative -> tail)";
+headRandom::usage="preview a structure by showing n Random  members (n can only be positive)";
+packVars::usage="collect large enough variables and pack the whole notebook too";
+unPackVars::usage="extract variables from the association that captures the notebook";
+colorbar::usage="";
+meshGrid2::usage="Wolfram centric meshgrid";
+findBlobs::usage="detect blobs with sckikit";
+logBlob::usage="detect blobs with Wolfram";
+plotStylePhys::usage="modified plotStyle with square shape and gridlines";
+openNotebook::usage="open notebook from a given address file";
+figToClip::usage="quickly capture and copy whole figure to clipboard (via local storage instance)";
+figToSVG::usage="save figure as SVG file, and copy the filepath into Clipboard";
+figToPNG::usage="save figure as PNG file, and copy the filepath into Clipboard";
+pipe::usage="synonym of RightComposition";
+reveal::usage="synonym of GeneralUtilities`PrintDefinitions";
 
 
 (* ::Subsection:: *)
@@ -172,50 +189,153 @@ readH5saveSVG::usage = "overloaded function to pull figures and lists of figures
 Begin["`Private`"];
 
 
-(* ::Subsection:: *)
-(*on startup*)
+\[Square]x_:=Map@@{x,#}&;
+pipe = RightComposition;
+reveal = GeneralUtilities`PrintDefinitions;
 
 
-NiceGrid := ResourceFunction["NiceGrid"]
-CombinePlots := ResourceFunction["CombinePlots"]
-dump := (DumpSave[NotebookFileName[]<>".mx","Global`"]; Print["saved"];)
-recall := (Get[NotebookFileName[]<>".mx","Global`"]; Print["recalled"];)
-dumpVars := Block[{vars}, (
-	vars = Position[(Head@Symbol[#])&/@Names["Global`*"],_?(MatchQ[#,List]||MatchQ[#,Association]&)]//Flatten;
-	Export[NotebookFileName[]<>"vars.mx",Symbol[#]&/@Part[Names["Global`*"],vars],"MX"]
-	)];
-initNB[];
-plotStyle[] := Block[{},{BaseStyle->Directive[FontFamily->"Sansa",FontSize->18], Axes->False, Frame->True, FrameStyle->Directive[ Thickness[0.002]],ImageSize->500,PlotRange->All}];
-plotStyle[xlabel_?StringQ, ylabel_?StringQ] := Block[{},{BaseStyle->Directive[FontFamily->"Sansa",FontSize->18], Axes->False, Frame->True, FrameStyle->Directive[ Thickness[0.002]],ImageSize->500,PlotRange->All,
-FrameLabel->{xlabel,ylabel}}];
-x_\[DoubleLongRightArrow]y_:=Map[x,y];
+(* ::Section:: *)
+(*Aux*)
 
 
-(* ::Subsection:: *)
-(*mini-monadic functionality*)
+growBranch[val_?(Not[AssociationQ@#]&), newkey_:"s", mod_:(#&)]:=<|newkey-> mod@val|>;
+clearPlot[p_]:=Show[p,BaseStyle-> {FontFamily->"Latin Modern Roman",FontSize->14},AxesStyle-> Thickness[0.003]];
+quickShape[arr_?ListQ,dims_?ListQ]:=ArrayReshape[arr,Join[dims,{Last@Dimensions@arr}]];
+dimCheck[arr_?ListQ, d_]:=(Length@Dimensions@arr>=2);
+adjustPlot[plot_Graphics,styles_List,op:OptionsPattern[Graphics]]:=Module[{x=styles},Show[MapAt[#/.{__,ln__Line}:>{Directive@Last[x=RotateLeft@x],ln}&,plot,1],op]];
 
 
-kill[t_:10][expr_] := TimeConstrained[expr,t];
-head[expr_, num_:5] := Take[expr,num];
-headRandom[expr_, num_:5] := RandomSample[expr,num];
+(* ::Section:: *)
+(*Save/Retrieve notebook*)
 
 
-(* ::Subsection:: *)
-(*importing functionality*)
+SetAttributes[saveState,HoldAll];
+saveState[saveFile_:NotebookFileName[] <>".mx"]:=Block[{},
+	Export[saveFile,packVars[]];
+	Echo["saved in " <> saveFile];
+	]
 
 
-readDat[fname_]:=Block[{lst, datapos, assc,header, data, chanpos, chanposOffset, channelsNames},
-(lst = Import[fname];
-datapos = First@Flatten@Position[lst,"[DATA]"];
-header =lst[[1;;datapos]];
-data = lst[[ datapos+1;;]];
-chanpos = First@#&/@Position[StringPosition[data[[1]],"("~~__~~")"],{1,3}];
-chanposOffset = Join[{1},(chanpos + 1)[[1;;-2]]];
-channelsNames = MapThread[StringJoin@data[[1]][[#1;;#2]]&,{chanposOffset,chanpos}];
-assc = <|MapThread[#1-> #2&,{channelsNames,Transpose@data[[2;;]]}]|>;
-assc["Z"]= Last@Flatten@(Pick[#,ContainsAll[#,{"offset","Z"}]]&/@lst);
-assc)
-];
+SetAttributes[getState,HoldAll];
+getState[saveFile_:NotebookFileName[] <>".mx"]:= Import[saveFile]//unPackVars
+
+
+
+packVars[] := 
+	Block[{names, kernAssc, keyFilter},
+	(keyFilter[key_]:=
+		If[
+			StringMatchQ[ToString@Head@Symbol@key,"class"], (Symbol@key)["save"],
+				If[ByteCount[Symbol@key]>1000, Symbol@key]
+			];	
+		
+	kernAssc = AssociationMap[keyFilter@#&,  Names["Global`*"]];
+	kernAssc["notebook"] = Compress@NotebookGet[]; (*get the whole notebook too*)
+	kernAssc)
+	]
+
+
+unPackVars[assc_]:=
+		Module[{keyFilter, arr},
+		(keyFilter[key_,value_]:=
+			If[
+				And[AssociationQ[value],KeyExistsQ[value, "self"]], 
+				(Sow["class " <> key];
+				value["self","parent"][Echo@key, value["self"]]
+				),
+				ToExpression[Sow@key, InputForm,Function[name,name=value,HoldAll]]
+			  ];
+		
+		Reap[KeyValueMap[keyFilter[#1,#2]&, assc]]//
+			RightComposition[Last,Last,Sort,Multicolumn[#,5]&,TableForm]
+		
+			)
+			]
+
+
+unPackVars[assc_, specificKey_]:=
+		Module[{keyFilter},
+		(keyFilter[key_,value_]:=
+			If[
+				And[AssociationQ[value],KeyExistsQ[value, "self"]], 
+				(Sow["class " <> key];
+				value["self","parent"][Echo@key, value["self"]]
+				),
+				ToExpression[Sow@key, InputForm,Function[name,name=value,HoldAll]]
+			  ];
+		
+		Reap[KeyValueMap[keyFilter[#1,#2]&, KeyTake[assc, specificKey]]]//
+			RightComposition[Last,Last,Sort,Multicolumn[#,5]&,TableForm]
+			)
+			]
+
+
+(* ::Section:: *)
+(*Clustering*)
+
+
+caCluster[data_][
+		dimRedFunc_:(DimensionReduce[#]&), clusterFunc_:(ClusterClassify[#]&), pointSize_:0.005]:=
+		Block[{ct=<||>,reducedDims, nClusters},
+		(
+		ct["params"]= <|"clusterFunc"-> clusterFunc, "dimRedFunc"-> dimRedFunc, "colors"-> (ColorData[24, "ColorList"][[#]]&/@{1,5,2,7,10})|>;
+		ct["dimRed"] =  NumericArray@dimRedFunc@data;
+		ct["trainedfunc"] = clusterFunc@Normal@ct["dimRed"];
+		ct["labels"] = NumericArray@ct["trainedfunc"]@ct["dimRed"];
+		reducedDims = Last@Dimensions@ct["dimRed"];
+		nClusters = Echo@Max@ct["labels"];
+		ct["scatter"] = If[reducedDims < 3,
+		ListPlot[
+			Style[Pick[Normal@ct["dimRed"], Normal@ct["labels"], #],Darker@ct["params"]["colors"][[#]], PointSize[pointSize]]&/@Range@nClusters,
+			AxesLabel-> Table["C" <> ToString[j],{j,Range@nClusters}],PlotRange->Automatic,Axes->None],
+			Echo@"need to extend plotting to 3D"];
+			
+		ct["map"]=
+			DensityPlot[ct["trainedfunc"]@{x,y},
+			{x,Min@ct["dimRed"],Max@ct["dimRed"]},{y,Min@ct["dimRed"],Max@ct["dimRed"]},
+			Frame->None,ColorFunction->(Opacity[0.3,ct["params"]["colors"][[#]]]&),ColorFunctionScaling->False];
+		ct
+		)];
+
+
+
+clusterCenters[ct_?AssociationQ, styleOpts_:Thickness[0.005]][data_, xx_,mod_:(#&),plotOpts_:plotStyle[]] :=
+		Block[{},(
+			ListLinePlot[
+			Style[
+			Transpose[{Normal@xx,
+			mod[Mean[Pick[data,Normal@ct["labels"], #]]]}],ct["params"]["colors"][[#]], styleOpts
+			]&/@Range@Max@ct["labels"],plotOpts]
+			) 
+			];
+
+
+(* ::Section:: *)
+(*FileIO*)
+
+
+readDat[fname_]:=
+	Block[{lst, datapos, assc,header, data, chanpos, chanposOffset, channelsNames},
+		(
+		lst = Import[fname];
+		datapos = First@Flatten@Position[lst,"[DATA]"];
+		header =lst[[1;;datapos]];
+		data = lst[[ datapos+1;;]];
+		chanpos = First@#&/@Position[StringPosition[data[[1]],"("~~__~~")"],{1,3}];
+		chanposOffset = Join[{1},(chanpos + 1)[[1;;-2]]];
+		channelsNames = MapThread[StringJoin@data[[1]][[#1;;#2]]&,{chanposOffset,chanpos}];
+		assc = <|MapThread[#1-> #2&,{channelsNames,Transpose@data[[2;;]]}]|>;
+		assc["Z"]= Last@Flatten@(Pick[#,ContainsAll[#,{"offset","Z"}]]&/@lst);
+		assc
+		)
+		];
+
+
+openNotebook[f_] := NotebookOpen[NotebookDirectory[]<> f];
+
+
+(* ::Section:: *)
+(*Nanonis*)
 
 
 (* ::Subsection:: *)
@@ -242,7 +362,7 @@ reportChans[grd_?AssociationQ]:=
 
 reportGrid[gridFileName_?StringQ]:= 
 	Block[{grd},
-		(grd = parse3DS[gridFileName];
+		(grd = OOP`parse3DS[gridFileName];
 		Echo@reportCore[grd];
 		grd)];
 
@@ -253,8 +373,29 @@ reportGrid[grd_?AssociationQ, chans_?IntegerQ]:=Block[{},
 	reportChans[grd])];
 
 
-(* ::Subsection:: *)
-(*data processing*)
+figToClip[f_, res_:200] := Echo@f//
+							Export["t2.png",#,ImageResolution->res, Background-> None]&//
+							Import//
+							CopyToClipboard;
+
+
+figToSVG[f_, fname_]:=  Echo@f//
+				Export[NotebookDirectory[]<>fname<>".svg",#]&//
+				CopyToClipboard;
+
+
+figToPNG[f_, fname_, res_:300]:=  Echo@f//
+				Export[NotebookDirectory[]<>fname<>".png",#, ImageResolution->res,
+				Background->None]&//
+				CopyToClipboard;
+
+figToPNG[f_, fname_, op__:OptionsPattern]:=  Echo@f//
+				Export[NotebookDirectory[]<>fname<>".png",#, op]&//
+				CopyToClipboard;
+
+
+(* ::Section:: *)
+(*Spectra*)
 
 
 normalize[chanNorm_:(#/1*^-12&)][data_] := NumericArray@Flatten[Normal@chanNorm@data,1];
@@ -266,363 +407,62 @@ denoise[dimReduceComponents_:3][data_]:=
 		NumericArray@dimReducer["ReducerFunction"][data,"ReconstructedData"]];
 
 
-differentiate[\[Sigma]_:0][data_]:= NumericArray@(-1 DerivativeFilter[#,{1},\[Sigma]]&/@Normal@data )
-
-
-(*pca\[Bullet]kmeans[ncomps_:2, nclust_:2][data_?AssociationQ]:=
-	Block[{ct=<||>},(
-		ct ["params"]= <|"chan"-> First@Keys@data,"components"->  ncomps, "clusters"-> nclust, "colors"-> (ColorData[24, "ColorList"][[#]]&/@{1,5,2,7,10})|>;
-		ct["PCA"] =  DimensionReduce[First@data,ncomps,Method->"PrincipalComponentsAnalysis"];
-		ct["PCA\[Bullet]kMeans"] = ClusterClassify[ct["PCA"], nclust, Method->"KMeans", DistanceFunction->EuclideanDistance];
-		ct["PCA\[Bullet]kMeans\[Bullet]scatter"] = ListPlot[
-		Style[Pick[ct["PCA"], ct["PCA\[Bullet]kMeans"]@ct["PCA"], #],ct["params"]["colors"][[#]]]&/@Range[nclust],AxesLabel-> {"PCA1","PCA2"}];
-		ct["PCA\[Bullet]kmeans\[Bullet]centers"] =
-		ListLinePlot[
-			Style[
-			Transpose[{1*^3 Normal@data["xx"],
-			Mean[Pick[First@data,ct["PCA\[Bullet]kMeans"]@ct["PCA"], #]]}],ct["params"]["colors"][[#]]
-			]&/@Range[nclust]];
-		ct["PCA\[Bullet]kMeans\[Bullet]scores\[Bullet]map"]=
-		Show[ct["PCA\[Bullet]kMeans\[Bullet]scatter"],Graphics[{Opacity-> 0.2,First@#}],ct["PCA\[Bullet]kMeans\[Bullet]scatter"]]&@(
-		ArrayPlot[#, ColorFunction->(ct["params"]["colors"][[Floor[#+1]]]&), DataReversed->{True,False},DataRange->{{Min@ct["PCA"],Max@ct["PCA"]},{Min@ct["PCA"],Max@ct["PCA"]}}, Frame->None]&@ParallelTable[ct["PCA\[Bullet]kMeans"]@{j,i},{i,Range[Min@ct["PCA"],Max@ct["PCA"],1]},{j,Range[Min@ct["PCA"],Max@ct["PCA"],1]}]);
-		ct)];*)
-
-
-caCluster[dimRedFunc_:(DimensionReduce[#]&), clusterFunc_:(ClusterClassify[#]&)][data_] :=
-		Block[{ct=<||>,reducedDims, nClusters},(
-		ct["params"]= <|"clusterFunc"-> clusterFunc,
-		"dimRedFunc"-> dimRedFunc, "colors"-> (ColorData[24, "ColorList"][[#]]&/@{1,5,2,7,10})|>;
-		ct["dimRed"] =  NumericArray@dimRedFunc@data;
-		ct["trainedfunc"] = clusterFunc@Normal@ct["dimRed"];
-		ct["labels"] = NumericArray@ct["trainedfunc"]@ct["dimRed"];
-		reducedDims = Last@Dimensions@ct["dimRed"];
-		nClusters = Echo@Max@ct["labels"];
-		ct["scatter"] = If[reducedDims < 3,ListPlot[
-			Style[Pick[Normal@ct["dimRed"], Normal@ct["labels"], #],ct["params"]["colors"][[#]]]&/@Range@nClusters,
-			AxesLabel-> Table["C" <> ToString[j],{j,Range@nClusters}],PlotRange->All],Echo@"need to extend plotting to 3D"];
-		ct["map"]=
-			Show[ct["scatter"],DensityPlot[ct["trainedfunc"]@{x,y},
-			{x,Min@ct["dimRed"],Max@ct["dimRed"]},{y,Min@ct["dimRed"],Max@ct["dimRed"]},
-			Frame->None,ColorFunction->(Opacity[0.3,ct["params"]["colors"][[#]]]&),ColorFunctionScaling->False]];
-		ct)];
-
-
-
-clusterCenters[ct_?AssociationQ, styleOpts_:Thickness[0.005]][data_, xx_,mod_:(#&)] :=Block[{},(
-			ListLinePlot[
-			Style[
-			Transpose[{Normal@xx,
-			mod[Mean[Pick[data,Normal@ct["labels"], #]]]}],ct["params"]["colors"][[#]], styleOpts
-			]&/@Range@Max@ct["labels"]]
-			) ];
-
-
 removeSpikes[data_,quantiles_:{0.05,0.95}, interp_:25]:=
-Block[{qfuncs, topOutliers, outlierRegions, newData, outlierWindows},
-(
-qfuncs=ResourceFunction["QuantileRegression"][data,interp,quantiles];
-topOutliers=Flatten@(Position[data,#]&/@Select[data,qfuncs[[-1]][#[[1]]]<0.7 #[[2]]&]);
-newData =Part[data,Complement[Range@Length@data,Flatten[#]&@(Join[Range[Max[{1,#-4}],Min[{#+4,Length@data}]]]&/@topOutliers)]];
-intrp =ListInterpolation[Sequence@@{Last@#,{First@#}}]&@Transpose@newData;
-Transpose[{#,intrp@#}]&@First@Transpose@data
-)];
+		Block[{qfuncs, topOutliers, outlierRegions, newData, outlierWindows, intrp},
+			(
+			qfuncs=ResourceFunction["QuantileRegression"][data,interp,quantiles];
+			topOutliers=Flatten@(Position[data,#]&/@Select[data,qfuncs[[-1]][#[[1]]]<0.7 #[[2]]&]);
+			newData =Part[data,Complement[Range@Length@data,Flatten[#]&@(Join[Range[Max[{1,#-4}],Min[{#+4,Length@data}]]]&/@topOutliers)]];
+			intrp =ListInterpolation[Sequence@@{Last@#,{First@#}}]&@Transpose@newData;
+			Transpose[{#,intrp@#}]&@First@Transpose@data
+			)];
 
 
 (* ::Subsection:: *)
-(*auxiliary functions*)
+(*visualization*)
 
 
-attachX[xx_:None][data_]:=<|"data"->data, "xx"-> If[MatchQ[xx,None],Range@Last@Dimensions@data,xx]|>;
+(* ::Subsubsection:: *)
+(*plotStyle*)
 
 
-(*JsonImport[filename_]:=Uncompress@Import[filename]
-JsonExport[data_,filename_:""]:=Export[If[filename=="", SymbolName[Unevaluated@data],filename]<>".json",Compress[data]]
-saveDump[]:= Row[#]&@{Button["Save Kernel",Module[{},{DumpSave[StringTake[#,{1,-3}]&@NotebookFileName[]<>"mx","Global`"],Print["Saved "<>DateString[]]}]],
-Button["Load Kernel",
-Module[{},{Get[StringTake[#,{1,-3}]&@NotebookFileName[]<>"mx"],Print["Loaded "<>DateString[]]}]],
-Button["Get Calme",Get["Calme`"]]}
-initNB[]:=Module[{},{
-		SetOptions[$FrontEndSession,
-		AutoStyleOptions->{"SymbolContextStyles"->
-		{"Global`"->{FontColor->RGBColor[{1,165/256,0}], FontVariations->{Shadow->False}}}}]
-		}]
-figureToClipboard[graph_]:= Module[{},Export["pp2.png",graph,ImageResolution->200,Background->None];
-CopyToClipboard[Import["pp2.png"]];];
-chainAssoc[src_:?AssociationQ, mod_:None,keys_:{"s","d"}(*source/drain*)]:=<|First@keys->src,Last@keys->mod|>;
-growBranch[assc_?AssociationQ, path_?ListQ, newkey_:"s", mod_:(#&)]:=ResourceFunction["NestedAssociate"][assc,path-><|newkey-> mod@Extract[assc,path]|>];
-forkBranch[assc_?AssociationQ,path_?ListQ, data_]:= ResourceFunction["NestedAssociate"][assc,path->data];
-(*growForkBranch[assc_?AssociationQ, path_?ListQ, newkey_?StringQ, mod_:(#&)]:=
-	Block[{assc2=ResourceFunction["NestedKeyDrop"][assc, path]},
-		ResourceFunction["NestedAssociate"][assc2,path \[Rule] <|"s" \[Rule] Extract[assc2,path], newkey \[Rule] mod@Extract[assc2,path]|>]];
-*)
-growForkBranch[assc_?AssociationQ, path_?ListQ, newkey_?StringQ, mod_:(#&)]:=
-	ResourceFunction["NestedAssociate"][assc,path -> <|"s" -> Extract[assc,path], newkey -> mod@Extract[assc,path]|>];
-
-colorGrads = GraphicsGrid[Partition[Tooltip[ColorData[#,"Image"],#]&/@ColorData["Gradients"],3],ImageSize->300];
-
-testListAssociation[x_] := Which[ListQ@#,If[Max@Dimensions@#<100,#,Dimensions@#],AssociationQ@#,(Print["Keys:"];Keys@#)]&@x;
-assignSymbol[s_?StringQ,val_]:=(ClearAll[s];Activate[Inactive[Set][Symbol[s],val]]);*)
+plotStyle[framethick_:0.004] := 
+	{
+	BaseStyle->Directive[FontFamily->"Sansa",FontSize->18, FontColor->Darker@Gray], 
+	Axes->False,
+	PlotStyle->Directive[Thickness[2 framethick]], 
+	Frame->True, 
+	FrameStyle->Directive[ Thickness[framethick]],
+	ImageSize->300,
+	PlotRange->All, 
+	AspectRatio->1.0, 
+	GridLines->Automatic,
+	GridLinesStyle->Directive[Gray, Thickness[framethick/10]]
+	};
 
 
-
-growBranch[val_?(Not[AssociationQ@#]&), newkey_:"s", mod_:(#&)]:=<|newkey-> mod@val|>;
-clearPlot[p_]:=Show[p,BaseStyle-> {FontFamily->"Latin Modern Roman",FontSize->14},AxesStyle-> Thickness[0.003]];
-quickShape[arr_?ListQ,dims_?ListQ]:=ArrayReshape[arr,Join[dims,{Last@Dimensions@arr}]];
-dimCheck[arr_?ListQ, d_]:=(Length@Dimensions@arr>=2);
-adjustPlot[plot_Graphics,styles_List,op:OptionsPattern[Graphics]]:=Module[{x=styles},Show[MapAt[#/.{__,ln__Line}:>{Directive@Last[x=RotateLeft@x],ln}&,plot,1],op]];
+plotStylePhys[s_Symbol] := FilterRules[plotStyle[],Options[s]]
 
 
-
-(* ::Section:: *)
-(*h5 functionality*)
-
-
-saveH5[hname_?StringQ, path_?StringQ, expr_?StringQ]:=Export[hname,{
-path->expr},OverwriteTarget->"Append", "AppendMode"->"Overwrite"];
-
-saveH5[saveFile_:NotebookFileName[] <>".h5"]:=Block[{names, kernAssc},
-	names = Names["Global`*"]//Pick[#,ByteCount[Symbol@#]&/@#,_?(#>1000&)]&;
-	kernAssc =Compress/@AssociationMap[Symbol@#&,names];
-	Export[saveFile,Normal@kernAssc,OverwriteTarget->"Append", "AppendMode"->"Overwrite"];
-	Echo["saved in " <> saveFile];
+plotStylePhys[] := 
+	Module[{specs},
+	specs = FilterRules[plotStyle[],Options[#]]&/@Stack[];
+	First@Pick[specs, specs//Map[Dimensions,#]&//Flatten, _?(#>0&)]
 	]
 
 
-recallH5[h5file_?StringQ,varnames_,path:"/vars/"]:=Block[{vars},(
-vars = If[MatchQ[Head@varnames,List],varnames,{varnames}];
-
-Map[(Echo@#;ToExpression[Last@StringSplit[#,"/"],
-		InputForm,Function[name,name=Uncompress@Import[h5file,(path <> #)],HoldAll]])&,
-		vars]
-)];
-
-recallH5[h5file_?StringQ]:=Block[{varnames, vardata},
-varnames = Import[h5file];
-vardata = Quiet@Map[Check[Uncompress@Import[h5file,#]&,Echo@"err"],varnames];
-MapThread[ToExpression[Last@StringSplit[#1,"/"],InputForm,Function[name,name=#2,HoldAll]]&,{varnames,vardata}];
-Echo@varnames;
-];
-
-recallH5[]:=Block[{varnames, vardata, h5file=NotebookFileName[] <>".h5"},
-varnames = Import[h5file];
-vardata = Quiet@Map[Check[Uncompress@Import[h5file,#]&,Echo@"err"],varnames];
-MapThread[ToExpression[Last@StringSplit[#1,"/"],InputForm,Function[name,name=#2,HoldAll]]&,{varnames,vardata}];
-Echo@varnames;
-];
+plotStylePhys[xlabel_?StringQ, ylabel_?StringQ] := Join[plotStylePhys[], {FrameLabel->{xlabel,ylabel}}];
 
 
-readH5saveSVG[h5name_]:=Block[{paths},
-paths = Import[h5name];
-readH5saveSVG[h5name,#]&/@paths;
-];
-
-readH5saveSVG[h5name_,path_]:=Block[{figObj, savedir},
-savedir = DirectoryName@h5name;
-figObj = Import[h5name,path]//Uncompress;
-Switch[
-Head@figObj,
-Graphics, (Echo@Export[DirectoryName@h5name <>Last@StringSplit[path,"/"]<>".svg",figObj, ImageResolution->300];),
-List, (MapIndexed[Echo@Export[DirectoryName@h5name <>Last@StringSplit[path,"/"]<>ToString@First@#2<>".svg",
-#1, ImageResolution->300]&, figObj];)
-]
-];
+plotStylePhys[s_Symbol, xlabel_?StringQ, ylabel_?StringQ] := Join[plotStylePhys[s], {FrameLabel->{xlabel,ylabel}}];
 
 
-(* ::Section::GrayLevel[0]:: *)
-(*Define Fourier and sliding functions*)
+addLabel[plot_,labels_:{"",""},op:OptionsPattern[]:{}]:=
+Labeled[plot,{First@labels,Rotate[Last@labels,Pi/2]},{Bottom,Left},op,LabelStyle->{FontFamily->"Sansa",FontSize->17, FontColor-> Darker@Gray},Spacings->{0, 0} ];
 
 
-(* ::Code::Initialization::GrayLevel[0]:: *)
-fftshift[dat_?ArrayQ,k:(_Integer?Positive|All):All]:=Module[{dims=Dimensions[dat]},RotateRight[dat,If[k===All,Quotient[dims,2],Quotient[dims[[k]],2] UnitVector@@{Length[dims],k}]]];
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-ifftshift[dat_?ArrayQ,k:(_Integer?Positive|All):All]:=Module[{dims=Dimensions[dat]},RotateRight[dat,If[k===All,Ceiling[dims/2],Ceiling[dims[[k]]/2] UnitVector@@{Length[dims],k}]]];
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-imageCenter[im_?ImageQ] := Floor@Dimensions@ImageData@im/2.;
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-hannWindow[im_?ArrayQ] := Block[{w,h,hg,wg}, {w,h} = Dimensions@im; {hg, wg} = meshGrid[Range[h],Range[w]]; 
-									Times[HannWindow[hg/h-0.5],HannWindow[wg/w-0.5]]];
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-plotRanger[im_,nsigma_:2]:={#1-#2,#1+#2}&@@{Mean@#,nsigma* StandardDeviation@#}&@Flatten@im;
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-bandPass[im_?ArrayQ,d1_?IntegerQ,d2_?IntegerQ]:=Module[{imInternal, mask, imfft, imfiltered, imfftMasked, imMod},
-imInternal = Part[im,Range@#,Range@#]&@Min@Dimensions@im;
-(*assure square array*)
-mask = DiskMatrix[Max[#1]+1,Length@#2]-DiskMatrix[Min[#1],Length@#2]&@@{{d1,d2},imInternal};
-imfft=fftshift@Fourier@imInternal;
-imfftMasked = imfft*mask;
-imfiltered =InverseFourier@ifftshift@(imfftMasked);
-imMod = (#//Abs[1+#]&//Log//Image//ImageAdjust//DynamicImage)&;
-Grid[{{imMod@imfftMasked, imMod@imfiltered}}]]
-
-
-
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-bedOfNails[xp_,yp_,sz_]:=SparseArray@Flatten@Table[{xp*i,yp*k}->1,{i,1,sz/xp},{k,1,sz/yp}];
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-showFFT[im_?ArrayQ] := ImageAdjust@Image@Raster[#,ColorFunction->"Cool"]&@Log[#+1]&@Abs@fftshift@Fourier@im;
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-baseFFT[im_?ArrayQ] :=  Block[{hw,imC},
-					imC = (NumericArray@#)*(NumericArray@HannWindow@#)&@im;
-					Abs@fftshift@Fourier@Normal@imC];
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-numPartitions[im_?ArrayQ, pWidth_?ListQ, pStride_?ListQ] := Floor[(Dimensions[im][[#]]-pWidth[[#]])/pStride[[#]] +1]&/@Range@Length@Dimensions@im ;
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-(*meshGrid[x_List,y_List]:={ConstantArray[x,Length[x]],Transpose@ConstantArray[y,Length[y]]}*)
-meshGrid[xx_,yy_]:=Block[{py,mgrid},
-(py=StartExternalSession["Python"];
-mgrid = Normal@pyF[py]@("import numpy as np; np.meshgrid(range("<>ToString@(xx)<>"),range("<>ToString@(yy)<>"))")+1;
-DeleteObject[py];
-Return[mgrid, Block];)]
-
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-(*bgSubtract[py_,zArr_?ArrayQ]:=Module[{zArrIJ, bgFit,bg,xx,yy,a1,b1,c1,x,y},
-zArrIJ = Table[{ii,jj,#[[ii,jj]]},{ii,1,First@Dimensions@#,10},{jj,1,Last@Dimensions@#,10}]&@zArr;
-bgFit = NonlinearModelFit[Flatten[zArrIJ,1],a1 x + b1 y + c1,{a1, b1, c1},{x,y}];
-{xx,yy}=meshGrid[py,#[[1]],#[[2]]]&@Dimensions@zArr;
-Echo@NumericArray@((a1*xx+b1*yy + c1)/.bgFit["BestFitParameters"]);
-bg = Echo@((a1*Normal@xx+b1*Normal@yy+c1)/.bgFit["BestFitParameters"]);
-NumericArray[zArr,"Real32"]-bg
-];*)
-bgSubtract[zArr_]:=
-Block[{zArrIJ, bgFit,bg,xx,yy,a2,b2,a1,b1,c1,x,y},
-(
-	zArrIJ = ParallelTable[{ii,jj,#[[ii,jj]]},{ii,1,First@Dimensions@#,Floor[First@Dimensions@#/5.]},{jj,1,Last@Dimensions@#,Floor[Last@Dimensions@#/5.]}]&@zArr;
-
-	bgFit = NonlinearModelFit[Flatten[zArrIJ,1],a2 x^2 + a1 x + b2 y^2+ b1 y + c1,{a2,b2,a1, b1, c1},{x,y}];
-	ParallelTable[#[[ii,jj]]-bgFit[ii,jj],{ii,1,First@Dimensions@#,1},{jj,1,Last@Dimensions@#,1}]&@zArr
-)];
-
-
-(* ::Chapter::GrayLevel[0]:: *)
-(*Python inherited functions*)
-
-
-pyF[py_] := ExternalEvaluate[py, #]&;
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-(*pyBlobs[py_]:=Module[{},
-ExternalEvaluate[py,"from skimage.feature import blob_log, blob_dog, blob_doh"];
-<|"blobLog"-> ExternalFunction[py, "lambda im, min_s=1, max_s=30, n_s=10, ts=0.1, o_l=0.5, l_s=False, e_b=True:
-			blob_log(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=ts,overlap=o_l,log_scale=l_s,exclude_border=e_b)"],
-"blobDog"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, s_r = 1.6, t_s=0.1, o_l=0.5,e_b=False: 
-			blob_dog(im, min_sigma=min_s,max_sigma=max_s,sigma_ratio=s_r,threshold=t_s,overlap=o_l,exclude_border=e_b)"],
-"blobDoh"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, n_s = 10, t_s=0.01, o_l=0.5,l_s=False: 
-			blob_doh(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=t_s,overlap=o_l,log_scale=l_s)"]
-|>
-]*)
-
-
-pyBlobs[py_]:=ExternalEvaluate[py,"from skimage.feature import blob_log, blob_dog, blob_doh"];
-(*<|"blobLog"-> ExternalFunction[py, "lambda im, min_s=1, max_s=30, n_s=10, ts=0.1, o_l=0.5, l_s=False, e_b=True:
-			blob_log(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=ts,overlap=o_l,log_scale=l_s,exclude_border=e_b)"],
-"blobDog"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, s_r = 1.6, t_s=0.1, o_l=0.5,e_b=False: 
-			blob_dog(im, min_sigma=min_s,max_sigma=max_s,sigma_ratio=s_r,threshold=t_s,overlap=o_l,exclude_border=e_b)"],
-"blobDoh"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, n_s = 10, t_s=0.01, o_l=0.5,l_s=False: 
-			blob_doh(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=t_s,overlap=o_l,log_scale=l_s)"]
-|>
-*)
-
-
-pySciKit[py_]:=
-<|
-"Blobs" -> Module[{},
-	ExternalEvaluate[py,"from skimage.feature import blob_log, blob_dog, blob_doh"];
-	<|"blobLog"-> ExternalFunction[py, "lambda im, min_s=1, max_s=30, n_s=10, ts=0.1, o_l=0.5, l_s=False, e_b=True:
-			blob_log(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=ts,overlap=o_l,log_scale=l_s,exclude_border=e_b)"],
-	"blobDog"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, s_r = 1.6, t_s=0.1, o_l=0.5,e_b=False: 
-			blob_dog(im, min_sigma=min_s,max_sigma=max_s,sigma_ratio=s_r,threshold=t_s,overlap=o_l,exclude_border=e_b)"],
-	"blobDoh"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, n_s = 10, t_s=0.01, o_l=0.5,l_s=False: 
-			blob_doh(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=t_s,overlap=o_l,log_scale=l_s)"]|>],
-		
-"Manifold" -> Module[{},
-	ExternalEvaluate[py,"from sklearn import manifold"];
-	<|"tSNE"-> ExternalFunction[py, "lambda X, n_components=2, perplexity=5, n_iter=1000, init='random', random_state=0: manifold.TSNE(n_components=n_components, init=init,
-                         random_state=random_state, perplexity=perplexity, n_iter=n_iter).fit_transform(X)"]|>
-                         ],
-                         
-"Datasets" -> Module[{},
-	ExternalEvaluate[py,"from sklearn import datasets"];
-		<|"blobs"-> ExternalFunction[py, "lambda n_samples=2, n_features=2, centers=None, cluster_std=1.0: datasets.make_blobs(n_samples=n_samples, n_features=n_features, centers=centers, cluster_std=cluster_std, shuffle=True)"]|>
-         ]         
-|>
-
-
-
-pyHistogram[py_]:=Module[{},
-ExternalEvaluate[py,"from numpy import histogram"];
-ExternalFunction[py,"lambda a, bins=10,range=None,normed=None,weights=None,density=None: histogram(a,bins=10,range=None,normed=None,weights=None,density=None)"]]
-
-
-(* ::Subsection:: *)
-(*dataXray connectivity*)
-
-
-parse3DS[file3ds_] := Module[{xasc,gr2,coords,dataVars,attrs,py},(
-  
-    py=StartExternalSession["Python"];
-	pyF[py]@"import data_xray.nanonisio as nio; import numpy as np";
-	pyF[py]@(StringJoin["gr2 = nio.Grid('",file3ds,"')"]);
-	xasc = pyF[py]@("gr2.signals");
-	xasc["header"] = pyF[py]@("gr2.header");
-	DeleteObject[py];
-	xasc
-	)]
-	(*coords =(pyF[py]@"dict(gr2.ds.coords)");
-	Echo@Normal@coords;
-	dataVars = pyF[py]@"gr2.ds.data_vars";
-	attrs=pyF[py]@"gr2.ds.attrs";
-	gr2= pyF[py]@("gr2.ds['"<>coords[[1]]<>"'].values");
-	xasc =<|#->pyF[py] @("gr2.ds['"<>#<>"'].values")|>&@coords[[1]];
-	AssociateTo[xasc,#-> pyF[py]@("np.asarray(gr2.ds['"<>#<>"'].values,dtype=np.float)")]&/@dataVars;
-	(*Print@TableForm@KeyValueMap[{#1,#2}&,#]&@attrs;*)
-	xasc["attrs"]=attrs;
-*)	
-
-
-parseSXM[filesxm_] := Module[{xasc,gr2,coords,dataVars,attrs,py},
-  py=StartExternalSession["Python"];
-	pyF[py]@"import data_xray.nanonisio as nio; import numpy as np";
-	pyF[py]@StringJoin["gr2 = nio.Scan('",filesxm,"')"];
-	xasc = pyF[py]@("gr2.signals");
-	xasc["header"] = pyF[py]@("gr2.header");
-	DeleteObject[py];
-	xasc
-	(*coords =pyF[py]@"gr2.ds.coords";
-	dataVars = pyF[py]@"gr2.ds.data_vars";
-	attrs=pyF[py]@"gr2.ds.attrs";
-	gr2= pyF[py]@("gr2.ds['"<>coords[[1]]<>"'].values");
-	xasc =<|#->pyF[py] @("gr2.ds['"<>#<>"'].values")|>&@coords[[1]];
-	AssociateTo[xasc,#-> pyF[py]@("np.asarray(gr2.ds['"<>#<>"'].values,dtype=np.float)")]&/@dataVars;
-	(*Print@TableForm@KeyValueMap[{#1,#2}&,#]&@attrs;*)
-	xasc["attrs"]=attrs;*)
-	]
-
-
-(* ::Subsection:: *)
-(*data visualization*)
+(* ::Subsubsection:: *)
+(*others*)
 
 
 physicalTicks[src_,nticks_]:={#+1,(Round[src[[#+1]],0.001])}&/@Floor@Subdivide[Length@src-1,nticks-1];
@@ -634,17 +474,22 @@ tickScale[plotname_,factor_]:=Map[Times[#,{1,If[NumberQ[#[[2]]],1/factor,1],{1,1
 ticks[min_,max_,step_:0.1,ticklabel_:(#&)]:=Table[If[ FractionalPart[i]==0.,{i,ticklabel@i,.02,Black},{i,"",.01,Black}],{i,Floor[min],Ceiling[max],step}]
 
 
-singleSpectraViz[data_,chans_:{"cf"}]:=DynamicModule[{r={1,1}},Row@{Slider2D[Dynamic[r],{{1,1},#[[1;;2]]&@Dimensions@data[chans[[1]]],{1,1}},Appearance->{"Open"}],
-Dynamic@Row[ListLinePlot[Transpose@@{Normal@{data["bias"],data[#][[r[[1]],r[[2]]]]}},ImageSize->Medium]&/@chans]}]
+singleSpectraViz[data_,chans_:{"cf"}]:=
+				DynamicModule[{r={1,1}},
+				Row@{Slider2D[Dynamic[r],{{1,1},#[[1;;2]]&@Dimensions@data[chans[[1]]],{1,1}},Appearance->{"Open"}],
+				Dynamic@Row[ListLinePlot[Transpose@@{Normal@{data["bias"],data[#][[r[[1]],r[[2]]]]}},ImageSize->Medium]&/@chans]}]
 
 
-singleSpectraMapper[data_,chans_:{"cf"}]:=Dynamic[Module[{im,xp,yp,mp},{
-im = ImageAdjust@Image[#,ImageSize->Medium]&@data["zf"][[;;,;;,128]];
-mp =Floor/@(If[TrueQ[#==None],{1,1},#]&@MousePosition[{"Graphics",Image},{1,1}]);
-Grid[{{Show[im,Graphics[{Red,PointSize[0.025],Point[Floor/@mp]}]], SpanFromLeft},
-Row[ListLinePlot[Transpose@@{Normal@{data["bias"],data[#][[mp[[1]],mp[[2]]]]}},ImageSize->Medium]&/@chans]
-}]
-}]]
+singleSpectraMapper[data_,chans_:{"cf"}]:=
+			Dynamic[Module[{im,xp,yp,mp},
+			{
+			im = ImageAdjust@Image[#,ImageSize->Medium]&@data["zf"][[;;,;;,128]];
+			mp =Floor/@(If[TrueQ[#==None],{1,1},#]&@MousePosition[{"Graphics",Image},{1,1}]);
+			Grid[{{Show[im,Graphics[{Red,PointSize[0.025],Point[Floor/@mp]}]], SpanFromLeft},
+			Row[ListLinePlot[Transpose@@{Normal@{data["bias"],data[#][[mp[[1]],mp[[2]]]]}},ImageSize->Medium]&/@chans]
+			}]
+			}
+			]]
 
 
 (*This needs to be rewritten, so that data, chans and topo come in as already
@@ -714,78 +559,279 @@ Module[{histDim, plotMod, histPlots,xx},(
 
 
 
+(* ::Section:: *)
+(*FFT*)
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+fftshift[dat_?ArrayQ,k:(_Integer?Positive|All):All]:=Module[{dims=Dimensions[dat]},RotateRight[dat,If[k===All,Quotient[dims,2],Quotient[dims[[k]],2] UnitVector@@{Length[dims],k}]]];
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+ifftshift[dat_?ArrayQ,k:(_Integer?Positive|All):All]:=Module[{dims=Dimensions[dat]},RotateRight[dat,If[k===All,Ceiling[dims/2],Ceiling[dims[[k]]/2] UnitVector@@{Length[dims],k}]]];
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+imageCenter[im_?ImageQ] := Floor@Dimensions@ImageData@im/2.;
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+hannWindow[im_?ArrayQ] := Block[{w,h,hg,wg}, {w,h} = Dimensions@im; {hg, wg} = meshGrid[Range[h],Range[w]]; 
+									Times[HannWindow[hg/h-0.5],HannWindow[wg/w-0.5]]];
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+plotRanger[im_,nsigma_:2]:={#1-#2,#1+#2}&@@{Mean@#,nsigma* StandardDeviation@#}&@Flatten@im;
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+bandPass[im_?ArrayQ,d1_?IntegerQ,d2_?IntegerQ]:=Module[{imInternal, mask, imfft, imfiltered, imfftMasked, imMod},
+imInternal = Part[im,Range@#,Range@#]&@Min@Dimensions@im;
+(*assure square array*)
+mask = DiskMatrix[Max[#1]+1,Length@#2]-DiskMatrix[Min[#1],Length@#2]&@@{{d1,d2},imInternal};
+imfft=fftshift@Fourier@imInternal;
+imfftMasked = imfft*mask;
+imfiltered =InverseFourier@ifftshift@(imfftMasked);
+imMod = (#//Abs[1+#]&//Log//Image//ImageAdjust//DynamicImage)&;
+Echo@Grid[{{imMod@imfftMasked, imMod@imfiltered}}];
+Return[imfiltered,Module];
+];
+
+
+
+
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+bedOfNails[xp_,yp_,sz_]:=SparseArray@Flatten@Table[{xp*i,yp*k}->1,{i,1,sz/xp},{k,1,sz/yp}];
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+showFFT[im_?ArrayQ] := ImageAdjust@Image@Raster[#,ColorFunction->"Cool"]&@Log[#+1]&@Abs@fftshift@Fourier@im;
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+baseFFT[im_?ArrayQ] :=  Block[{hw,imC},
+					imC = (NumericArray@#)*(NumericArray@HannWindow@#)&@im;
+					Abs@fftshift@Fourier@Normal@imC];
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+numPartitions[im_?ArrayQ, pWidth_?ListQ, pStride_?ListQ] := Floor[(Dimensions[im][[#]]-pWidth[[#]])/pStride[[#]] +1]&/@Range@Length@Dimensions@im ;
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+(*meshGrid[x_List,y_List]:={ConstantArray[x,Length[x]],Transpose@ConstantArray[y,Length[y]]}*)
+(*meshGrid[xx_,yy_]:=
+	Block[{py,mgrid},
+	(py=StartExternalSession["Python"];
+	mgrid = Normal@pyF[py]@("import numpy as np; np.meshgrid(range("<>ToString@(xx)<>"),range("<>ToString@(yy)<>"))")+1;
+	DeleteObject[py];
+	Return[mgrid, Block];)
+	]
+(*
+meshgrid2[x_List,y_List]:={ConstantArray[x,Length[y]],Transpose@ConstantArray[y,Length[x]]};*)*)
+
+meshgrid[x__?VectorQ] := Transpose[Reverse[Transpose[Tuples[Reverse[{x}]]]]]
+
+
+(* ::Code::Initialization::GrayLevel[0]:: *)
+ClearAll["bgSubtract*"];
+bgSubtract[zArr_, model_:(NonlinearModelFit[#,a2 x^2 + a1 x + b2 y^2+ b1 y + c1,{a2,b2,a1, b1, c1},{x,y}]&)]:=
+Block[{zArrIJ, indArray,bgFit,bg,xx,yy,a2,b2,a1,b1,c1,x,y},
+(
+	indArray =zArr//MapIndexed[Last,#,{2}]&;
+	zArrIJ = indArray//Flatten[#,1]&//Transpose[{#,Flatten@zArr}]&//Flatten@#&/@#&;
+	bgFit = zArrIJ//model;
+	zArr - ParallelMap[bgFit[Sequence@@#]&,indArray,{2}]
+)];
+
+
+(* ::Section:: *)
+(*Pythonic functions*)
+
+
+pyF[py_] := ExternalEvaluate[py, #]&;
+
+
+pyBlobs[py_]:=ExternalEvaluate[py,"from skimage.feature import blob_log, blob_dog, blob_doh"];
+
+
+findBlobs[py_][im_]:=
+(pyBlobs[py];
+Manipulate[
+	Module[{dims, blobs},
+	{
+	dims = Dimensions@im;
+	blobs ={#[[2]],Dimensions[im][[2]]-#[[1]],#[[3]]}&/@Normal@ExternalFunction[py,"blob_log"][im, minS,maxS, nS, tS, oL, True];
+	Show[{Sharpen[#,5]&@ImageAdjust@Image@im,Graphics[{Orange,Disk[{#[[1]],#[[2]]},2.]}&/@blobs]}]
+	}],
+{{minS, 2.5},0.5,10,0.5},
+{{maxS,6.},0.5,10,0.5},
+{{nS,10.},0.5,20,0.5}, 
+{{tS,0.4},0.01,1.0,0.01},
+{{oL,0.55},0.05,1.0,0.05}])
+
+
+pySciKit[py_]:=
+<|
+"Blobs" -> Module[{},
+	ExternalEvaluate[py,"from skimage.feature import blob_log, blob_dog, blob_doh"];
+	<|"blobLog"-> ExternalFunction[py, "lambda im, min_s=1, max_s=30, n_s=10, ts=0.1, o_l=0.5, l_s=False, e_b=True:
+			blob_log(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=ts,overlap=o_l,log_scale=l_s,exclude_border=e_b)"],
+	"blobDog"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, s_r = 1.6, t_s=0.1, o_l=0.5,e_b=False: 
+			blob_dog(im, min_sigma=min_s,max_sigma=max_s,sigma_ratio=s_r,threshold=t_s,overlap=o_l,exclude_border=e_b)"],
+	"blobDoh"-> ExternalFunction[py, "lambda im, min_s=2, max_s=10, n_s = 10, t_s=0.01, o_l=0.5,l_s=False: 
+			blob_doh(im, min_sigma=min_s,max_sigma=max_s,num_sigma=n_s,threshold=t_s,overlap=o_l,log_scale=l_s)"]|>],
+		
+"Manifold" -> Module[{},
+	ExternalEvaluate[py,"from sklearn import manifold"];
+	<|"tSNE"-> ExternalFunction[py, "lambda X, n_components=2, perplexity=5, n_iter=1000, init='random', random_state=0: manifold.TSNE(n_components=n_components, init=init,
+                         random_state=random_state, perplexity=perplexity, n_iter=n_iter).fit_transform(X)"]|>
+                         ],
+                         
+"Datasets" -> Module[{},
+	ExternalEvaluate[py,"from sklearn import datasets"];
+		<|"blobs"-> ExternalFunction[py, "lambda n_samples=2, n_features=2, centers=None, cluster_std=1.0: datasets.make_blobs(n_samples=n_samples, n_features=n_features, centers=centers, cluster_std=cluster_std, shuffle=True)"]|>
+         ]         
+|>
+
+
+pyHistogram[py_]:=Module[{},
+ExternalEvaluate[py,"from numpy import histogram"];
+ExternalFunction[py,"lambda a, bins=10,range=None,normed=None,weights=None,density=None: histogram(a,bins=10,range=None,normed=None,weights=None,density=None)"]]
+
+
+(* ::Section:: *)
+(*Images*)
+
+
 (* ::Subsection:: *)
 (*image visualization*)
 
 
-colorbar[{min_,max_},colorFunction_: Automatic,divs_: 150]:=
+colorbar[
+	{min_,max_},
+	colorFunction_: Automatic,
+	divs_: 150]:=
 	(*FrameLabel\[Rule]{{None,Row[{Subscript["t","esc"]}]},{None,None}},LabelStyle\[Rule]Directive[FontFamily\[Rule]"Helvetica",20] <- Use this to label the scalebar*)
-	DensityPlot[y,{x,0,0.1},{y,min,max},AspectRatio->20,PlotRangePadding->0,PlotPoints->{2,divs},MaxRecursion->0,Frame->True,FrameTicks->{{None,All},{None,None}},FrameTicksStyle->Directive[FontFamily->"Helvetica",20,Plain],ColorFunction->colorFunction];
+	DensityPlot[y,{x,0,0.1},{y,min,max},AspectRatio->20,PlotRangePadding->0,PlotPoints->{2,divs},
+	MaxRecursion->0,Frame->True,FrameTicks->{{None,All},{None,None}},FrameTicksStyle->Directive[FontFamily->"Helvetica",40,Plain],ColorFunction->colorFunction];
 
 
-imageScalebar[attrs_?AssociationQ, cf_:"GrayYellowTones", scaleColor:White, sprinkles_:Nothing, opts:OptionsPattern[MatrixPlot]][imData_?ListQ]:=
-	Block[{scaleBarValue, scaleBarPixels, scaleBar, imPlot, imPlotScale, min, max},
-	(
-		{min,max}={Min@#,Max@#}&@Flatten@Flatten@imData;
-		scaleBarValue = 0.2 attrs["scan_range"][[1]]  1*^9;(*20% of the scanned range*)
-		scaleBarPixels = Floor@(1*^-9 scaleBarValue*attrs["scan_pixels"][[1]]/attrs["scan_range"][[1]]);
-		scaleBar = {Text[Style[ToString@NumberForm[scaleBarValue,2] <> " nm",scaleColor,25],{70,75}],{scaleColor,AbsoluteThickness[5],Line[{{20,50},{20+scaleBarPixels,50}}]}};
-		imPlot = MatrixPlot[imData, Frame -> None,PlotRange -> All, ColorFunctionScaling->False,
+(*imageScalebar[imData_,calibration_,cf_:"GrayYellowTones", scaleColor_:White, sprinkles_:Nothing,opts:OptionsPattern[MatrixPlot]]:=
+	(*calibrartion = First@Dimensions@scaledData/scanRange[[1]]*)
+	Block[{scaledData,scaleBarValue, scaleBarPixels, scaleBar, imPlot, imPlotScale, min, max},
+		(
+	scaledData = Rescale[Normal@imData];
+		{min,max}= {Min@#,Max@#}&@Flatten@Flatten@scaledData;
+		scaleBarValue = 0.2 First@Dimensions@imData/calibration//Floor//IntegerPart;
+		scaleBarPixels = calibration*scaleBarValue//Floor;
+		
+		scaleBar = {Text[Style[ToString@scaleBarValue <> " nm",scaleColor,25],
+{70,75}],{scaleColor,AbsoluteThickness[5],Line[{{20,50},{20+scaleBarPixels,50}}]}};
+		imPlot = MatrixPlot[scaledData, Frame -> None,PlotRange -> All, ColorFunctionScaling->False,
 			ColorFunction -> (ColorData[cf][Rescale[#,{1.1*min,0.9*max}]]&)];
 		imPlot = Show[{imPlot, sprinkles}];
-		imPlotScale = Graphics[scaleBar,PlotRange->Transpose@{{0,0},Dimensions@imData},Prolog->{Inset[imPlot,Center,Center,Dimensions@imData]}];
+		imPlotScale = Graphics[scaleBar,PlotRange->Transpose@{{0,0},Dimensions@imData},Prolog-> {Inset[imPlot,Center,Center,Dimensions@imData]}];
 		Row[{
 			Show[imPlotScale, opts],
-			Show[colorbar[{Min@Flatten@imData,Max@Flatten@imData},cf,150],opts]
+			Show[colorbar[{min,max},cf,150],opts]
 			}]
-
-	)];
-
+	)];*)
 
 
-imageScalebar[cf_:"GrayYellowTones", sprinkles_:Nothing, opts:OptionsPattern[MatrixPlot]][imData_?ListQ]:=
-	Block[{scaleBarValue, scaleBarPixels, scaleBar, imPlot, imPlotScale, min, max},
-	(
-		{min,max}={Min@#,Max@#}&@Flatten@Flatten@imData;
-		scaleBarValue = 0.2 attrs["scan_range"][[1]]  1*^9;(*20% of the scanned range*)
-		scaleBarPixels = Floor@(1*^-9 scaleBarValue*attrs["scan_pixels"][[1]]/attrs["scan_range"][[1]]);
-		scaleBar = {Text[Style[ToString@NumberForm[scaleBarValue,2] <> " nm",scaleColor,25],{70,75}],{scaleColor,AbsoluteThickness[5],Line[{{20,50},{20+scaleBarPixels,50}}]}};
-		imPlot = MatrixPlot[imData, Frame -> None,PlotRange -> All, ColorFunctionScaling->False,
+imageScalebar[imData_,calibration_,cf_:"GrayYellowTones", scaleColor_:White, modifier_:(#&)]:=
+	(*calibrartion = First@Dimensions@scaledData/scanRange[[1]]*)
+	Block[{scaledData,scaleBarValue, scaleBarPixels, scaleBar, imPlot, imPlotScale, min, max},
+		(
+	scaledData = Rescale[Normal@imData];
+		{min,max}= {Min@#,Max@#}&@Flatten@Flatten@scaledData;
+		scaleBarValue = 0.2 First@Dimensions@imData/calibration//Floor//IntegerPart;
+		scaleBarPixels = calibration*scaleBarValue//Floor;
+		
+		scaleBar = {Text[Style[ToString@scaleBarValue <> " nm",scaleColor,25],
+{70,75}],{scaleColor,AbsoluteThickness[5],Line[{{20,50},{20+scaleBarPixels,50}}]}};
+		imPlot = MatrixPlot[scaledData, Frame -> None,PlotRange -> All, ColorFunctionScaling->False,
 			ColorFunction -> (ColorData[cf][Rescale[#,{1.1*min,0.9*max}]]&)];
-		imPlot = Show[{imPlot, sprinkles}];
-		imPlotScale = Graphics[scaleBar,PlotRange->Transpose@{{0,0},Dimensions@imData},Prolog->{Inset[imPlot,Center,Center,Dimensions@imData]}];
-		Row[{
-			Show[imPlot, opts],
-			Show[colorbar[{Min@Flatten@imData,Max@Flatten@imData},cf,150],opts]
-		}]
+		imPlot =modifier@imPlot;
+		imPlotScale = Graphics[scaleBar,PlotRange->Transpose@{{0,0},Dimensions@imData},Prolog-> {Inset[imPlot,Center,Center,Dimensions@imData]}, ImageMargins->1];
+		GraphicsRow[{
+			Show[imPlotScale],
+			Show[colorbar[{min,max},cf,150]]
+			}]
 	)];
-
 
 
 niceMatrixPlot[clrs_:"TemperatureMap",op:OptionsPattern[MatrixPlot]][data_]:=
-	Block[{min, max},(
+	Block[{min, max},
+		(
 		{min,max}={Min@#,Max@#}&@Flatten@Flatten@data;
 		MatrixPlot[data, ColorFunctionScaling->False,
-			ColorFunction -> (ColorData[clrs][Rescale[#,{min,max}]]&), op])];
+			ColorFunction -> (ColorData[clrs][Rescale[#,{min,max}]]&), op]
+		)];
 
 
-diskRoiMask[srcImage_,diskXY_?ListQ, diskRadius_?NumberQ]:=Block[{xs,ys,dims,radius,mask},(
-dims=Dimensions@srcImage;
-	ys=Array[N[#1]&,dims]-diskXY[[1]];
-	xs=Array[N[#2]&,dims]-diskXY[[2]];
-radius=Sqrt[xs^2+ys^2];
-mask=UnitStep[diskRadius-radius])];
+diskRoiMask[srcImage_,diskXY_?ListQ, diskRadius_?NumberQ]:=
+	Block[{xs,ys,dims,radius,mask},
+		(
+		dims=Dimensions@srcImage;
+		ys=Array[N[#1]&,dims]-diskXY[[1]];
+		xs=Array[N[#2]&,dims]-diskXY[[2]];
+		radius=Sqrt[xs^2+ys^2];
+		mask=UnitStep[diskRadius-radius]
+		)];
 
 
-removeSpikes[data_,quantiles_:{0.05,0.95}, interp_:25]:=
-Block[{qfuncs, topOutliers, outlierRegions, newData, outlierWindows},
+(*we want to just get the points out, and then use highlight image for overlays*)
+logBlob[im_,\[Sigma]log :_?ListQ : {5,5}, thresh_:0.2, meanShiftRange_:5]:=
+Block[{logimage, maxima,pts,fig},
 (
-qfuncs=ResourceFunction["QuantileRegression"][data,interp,quantiles];
-topOutliers=Flatten@(Position[data,#]&/@Select[data,qfuncs[[-1]][#[[1]]]<0.7 #[[2]]&]);
-newData =Part[data,Complement[Range@Length@data,Flatten[#]&@(Join[Range[Max[{1,#-4}],Min[{#+4,Length@data}]]]&/@topOutliers)]];
-intrp =ListInterpolation[Sequence@@{Last@#,{First@#}}]&@Transpose@newData;
-Transpose[{#,intrp@#}]&@First@Transpose@data
-)];
+logimage= im//Rescale//Image[LaplacianGaussianFilter[#,\[Sigma]log]*-(First@\[Sigma]log)^2]&;
+maxima=ImageMultiply[MaxDetect[logimage],Binarize[logimage,thresh]];
+pts = maxima;
+pts = ComponentMeasurements[maxima,"Centroid"][[All,2]];
+pts = Union[MeanShift[pts, meanShiftRange, MaxIterations -> 10]];
+fig = Echo@Show[{Sharpen[#,1]&@ImageAdjust@Image[#]&@Rescale@im,Graphics[{Orange,Disk[{#[[1]],#[[2]]},2.]}&/@pts]}];
+ masks = ComponentMeasurements[Binarize[logimage,thresh],"Mask"];
+ <|"centroids"-> pts, "mask"->masks, "image"->fig |>
+)]
+
+
+(*logBlob[im_,\[Sigma]log :_?ListQ : {5,5}, thresh_:0.2, meanShiftRange_:5][op:OptionsPattern[Image]]:=
+Block[{pts, fig},
+(
+pts =logBlob[im, \[Sigma]log, thresh, meanShiftRange][];
+fig = Echo@Show[{Sharpen[#,1]&@ImageAdjust@Image[#,op]&@Rescale@im,Graphics[{Orange,Disk[{#[[1]],#[[2]]},2.]}&/@pts]}]
+Return[pts,Block];
+)]*)
+
+
+(*logBlob[im_,\[Sigma]log :_?ListQ : {5,5}, thresh_:0.2, meanShiftRange_:5,showNNs_?NumberQ, calibration_:1][op:OptionsPattern[Image]]:=
+Block[{pts, distGraph, fig, dist, ptsImage},
+(
+pts =logBlob[im, \[Sigma]log, thresh, meanShiftRange][];
+dist = pts//NearestNeighborGraph[#,showNNs]&//EdgeList//#-> (NumberForm[calibration*#,2]&@EuclideanDistance[First@#,Last@#])&/@#&;
+ptsImage = pts//Graphics[{Orange,Disk[{#[[1]],#[[2]]},1.]}&/@#]&;
+distGraph = pts//NearestNeighborGraph[#,showNNs,EdgeLabels->dist, PlotTheme->"Scientific",VertexLabels->None]&;
+fig = Show[{Sharpen[#,1]&@ImageAdjust@Image[#,op]&@Rescale@im,distGraph, ptsImage}]
+)]
+*)
+
+
+
+logBlobMask[im_,\[Sigma]log :_?ListQ : {5,5}, thresh_:0.2, meanShiftRange_:5][op:OptionsPattern[Image]]:=
+Block[{logimage, maxima,pts,fig},
+(
+logimage= im//Rescale//Image[LaplacianGaussianFilter[#,\[Sigma]log]*-(First@\[Sigma]log)^2]&;
+maxima=ImageMultiply[MaxDetect[logimage],Binarize[logimage,thresh]];
+pts = maxima;
+pts = ComponentMeasurements[maxima,"Centroid"][[All,2]];
+pts = Union[MeanShift[pts, meanShiftRange, MaxIterations -> 10]];
+fig = Echo@Show[{Sharpen[#,1]&@ImageAdjust@Image[#,op]&@Rescale@im,Graphics[{Orange,Disk[{#[[1]],#[[2]]},2.]}&/@pts]}];
+ masks = ComponentMeasurements[Binarize[logimage,thresh],"Mask"]
+)]
+
 
 
 (* ::Subsection:: *)
@@ -812,12 +858,15 @@ splitTrainValidate[dataArray_?ArrayQ,ratio_]:=Module[{train, validate},train = R
 validate=Complement[dataArray,train]; {train, validate}];
 
 
-pcaScree[data_?ListQ,trunc_:All, opts:OptionsPattern[ListPlot]]:=Block[{v},v=Eigenvalues[Covariance[data]];
-Row[{ListPlot[Normalize[#,Total],PlotRange->All,AxesLabel->{"eigval index","fraction of variance"},ImageSize->Medium, opts],
-ListPlot[Normalize[Accumulate[#],Last],PlotRange->All,AxesLabel->{"eigval index","cumulative fraction of variance"},ImageSize->Medium, opts]}]&@v[[1;;trunc]]];
+pcaScree[data_?ListQ,trunc_:All, opts:OptionsPattern[ListPlot]]:=
+	Block[{v},
+		v=Eigenvalues[Covariance[data]];
+		Row[{ListPlot[100 Normalize[#,Total],PlotRange->All,AxesLabel->{"eigval","% variance"},ImageSize->Medium, opts],
+		ListPlot[Normalize[100 Accumulate[#],Last],PlotRange->All,AxesLabel->{"eigval","cumul. % variance"},ImageSize->Medium, opts]}]&@v[[1;;trunc]]
+		];
 
-pcaScree[data_?(Not[ListQ@#]&),trunc_:All]:=data;
-
+(*pcaScree[data_?(Not[ListQ@#]&),trunc_:All]:=data;
+*)
 
 
 
@@ -917,7 +966,7 @@ ListLinePlot[Around@@@#&/@pDat,PlotRange->OptionValue[PlotRange],AspectRatio->Op
 
 
 (* ::Section:: *)
-(*SMIM functions*)
+(*SMIM*)
 
 
 loadSMIM[h5file_]:=
@@ -967,23 +1016,26 @@ stack
 
 
 
-End[]
+(* ::Section:: *)
+(*External functions*)
+
+
+(* ::Input:: *)
+(**)
+
+
+Scan[SetAttributes[#, {Protected, ReadProtected}]&,
+     Select[Symbol /@ Names["Calme`*"], Head[#] === Symbol &]];
+
+
+End[];
 
 
 Protect["Calme`*"];
-
-
-(* ::InheritFromParent:: *)
-(*{"adjustPlot","assc","assignSymbol","attrs","attrs$","bandPass","baseFFT","bedOfNails","bgSubtract","chainAssoc","chanHistogram","channelsNames","chanpos","chanposOffset","chans","clearPlot","CloseAllInputCells","colobar1","colorGrads","data","datapos","dimCheck","dimReducePacket","diskRoiMask","distMatrixHistogram","euclidDist","fftshift","figureToClipboard","fitFunc1D","fname","forkBranch","getLargestClusters","grd","gridFileName","growBranch","growForkBranch","hannWindow","header","hierarchy","hierarchyPlots","histogram2D","ifftshift","imageCenter","imageScalebar","initNB","JsonExport","JsonImport","lst","meanSpectraPlot","meshGrid","nestedAssociate","NiceGrid","niceMatrixPlot","normalize\[Bullet]denoise\[Bullet]differentiate","numPartitions","OpenAllInputsCells","outliersAndClusters","\n*)
-(*","parseSXM","pcaScree","physicalTicks","plotClusters","plotClusters1D","plotRanger","plotStyle","pointsToHistogram3D","pyBlobs","pyF","pyHistogram","quickShape","randomCheck","readDat","reportChans","reportCore","reportGrid","saveDump","showFFT","singleSpectraMapper","singleSpectraViz","spectraPicker","splitTrainValidate","testListAssociation","todaysDate","x","x$","y","z","$","$$"}*)
 
 
 EndPackage[]
 
 
 (* ::Subtitle:: *)
-(**)
-
-
-(* ::Chapter:: *)
 (**)
