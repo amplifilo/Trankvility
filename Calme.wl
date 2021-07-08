@@ -98,7 +98,7 @@ headRandom::usage="preview a structure by showing n Random  members (n can only 
 packVars::usage="collect large enough variables and pack the whole notebook too";
 unPackVars::usage="extract variables from the association that captures the notebook";
 colorbar::usage="";
-meshGrid2::usage="Wolfram centric meshgrid";
+meshgrid::usage="Wolfram centric meshgrid";
 findBlobs::usage="detect blobs with sckikit";
 logBlob::usage="detect blobs with Wolfram";
 plotStylePhys::usage="modified plotStyle with square shape and gridlines";
@@ -108,6 +108,11 @@ figToSVG::usage="save figure as SVG file, and copy the filepath into Clipboard";
 figToPNG::usage="save figure as PNG file, and copy the filepath into Clipboard";
 pipe::usage="synonym of RightComposition";
 reveal::usage="synonym of GeneralUtilities`PrintDefinitions";
+customTicks::usage="wrapping Charting`ScaledTicks function";
+addLabel::usage="labels a graphics object, allowing offsets and custom labels";
+logBlobScaler::usage="scaled blob transformation";
+tabbedNotebook::usage="create new tabbed notebook";
+nmfPY::usage="NMF algo from scikit-learn";
 
 
 (* ::Subsection:: *)
@@ -205,6 +210,13 @@ dimCheck[arr_?ListQ, d_]:=(Length@Dimensions@arr>=2);
 adjustPlot[plot_Graphics,styles_List,op:OptionsPattern[Graphics]]:=Module[{x=styles},Show[MapAt[#/.{__,ln__Line}:>{Directive@Last[x=RotateLeft@x],ln}&,plot,1],op]];
 
 
+tabbedNotebook[name_:"note1", tabs_:6, tabnames:"fig"] := Module[{n1},
+        (Get["https://raw.githubusercontent.com/b3m2a1/mathematica-tools/master/NotebookTabbing.wl"];
+
+        n1 = CreateDocument["Input"]; SetDockedTabs[n1, Table[tabnames <> ToString @ i -> i, {i, 3}]])
+];
+
+
 (* ::Section:: *)
 (*Save/Retrieve notebook*)
 
@@ -225,7 +237,7 @@ packVars[] :=
 	Block[{names, kernAssc, keyFilter},
 	(keyFilter[key_]:=
 		If[
-			StringMatchQ[ToString@Head@Symbol@key,"class"], (Symbol@key)["save"],
+			StringMatchQ[ToString@Head@Symbol@key,"class"], (Symbol@key) . "save"[],
 				If[ByteCount[Symbol@key]>1000, Symbol@key]
 			];	
 		
@@ -331,7 +343,9 @@ readDat[fname_]:=
 		];
 
 
-openNotebook[f_] := NotebookOpen[NotebookDirectory[]<> f];
+openNotebook[f_String] := If[StringContainsQ[f,"/"],
+NotebookOpen[f],
+NotebookOpen[NotebookDirectory[]<> f]]
 
 
 (* ::Section:: *)
@@ -384,7 +398,12 @@ figToSVG[f_, fname_]:=  Echo@f//
 				CopyToClipboard;
 
 
-figToPNG[f_, fname_, res_:300]:=  Echo@f//
+figToPNG[f_, fname_]:=  Echo@f//
+				Export[NotebookDirectory[]<>fname<>".png",#, ImageResolution->600,
+				Background->None]&//
+				CopyToClipboard;
+
+figToPNG[f_, fname_, res_:600]:=  Echo@f//
 				Export[NotebookDirectory[]<>fname<>".png",#, ImageResolution->res,
 				Background->None]&//
 				CopyToClipboard;
@@ -472,6 +491,9 @@ tickScale[plotname_,factor_]:=Map[Times[#,{1,If[NumberQ[#[[2]]],1/factor,1],{1,1
 
 
 ticks[min_,max_,step_:0.1,ticklabel_:(#&)]:=Table[If[ FractionalPart[i]==0.,{i,ticklabel@i,.02,Black},{i,"",.01,Black}],{i,Floor[min],Ceiling[max],step}]
+
+
+customTicks[min_,max_,numMajor_,numMinor_:5,tickLengths_:{.02,.01}] :=Charting`ScaledTicks[{Identity,Identity},TicksLength->{.03,.01}][min,max,{numMajor,numMinor}]
 
 
 singleSpectraViz[data_,chans_:{"cf"}]:=
@@ -598,10 +620,6 @@ Return[imfiltered,Module];
 ];
 
 
-
-
-
-
 (* ::Code::Initialization::GrayLevel[0]:: *)
 bedOfNails[xp_,yp_,sz_]:=SparseArray@Flatten@Table[{xp*i,yp*k}->1,{i,1,sz/xp},{k,1,sz/yp}];
 
@@ -621,30 +639,7 @@ numPartitions[im_?ArrayQ, pWidth_?ListQ, pStride_?ListQ] := Floor[(Dimensions[im
 
 
 (* ::Code::Initialization::GrayLevel[0]:: *)
-(*meshGrid[x_List,y_List]:={ConstantArray[x,Length[x]],Transpose@ConstantArray[y,Length[y]]}*)
-(*meshGrid[xx_,yy_]:=
-	Block[{py,mgrid},
-	(py=StartExternalSession["Python"];
-	mgrid = Normal@pyF[py]@("import numpy as np; np.meshgrid(range("<>ToString@(xx)<>"),range("<>ToString@(yy)<>"))")+1;
-	DeleteObject[py];
-	Return[mgrid, Block];)
-	]
-(*
-meshgrid2[x_List,y_List]:={ConstantArray[x,Length[y]],Transpose@ConstantArray[y,Length[x]]};*)*)
-
 meshgrid[x__?VectorQ] := Transpose[Reverse[Transpose[Tuples[Reverse[{x}]]]]]
-
-
-(* ::Code::Initialization::GrayLevel[0]:: *)
-ClearAll["bgSubtract*"];
-bgSubtract[zArr_, model_:(NonlinearModelFit[#,a2 x^2 + a1 x + b2 y^2+ b1 y + c1,{a2,b2,a1, b1, c1},{x,y}]&)]:=
-Block[{zArrIJ, indArray,bgFit,bg,xx,yy,a2,b2,a1,b1,c1,x,y},
-(
-	indArray =zArr//MapIndexed[Last,#,{2}]&;
-	zArrIJ = indArray//Flatten[#,1]&//Transpose[{#,Flatten@zArr}]&//Flatten@#&/@#&;
-	bgFit = zArrIJ//model;
-	zArr - ParallelMap[bgFit[Sequence@@#]&,indArray,{2}]
-)];
 
 
 (* ::Section:: *)
@@ -700,6 +695,40 @@ pySciKit[py_]:=
 pyHistogram[py_]:=Module[{},
 ExternalEvaluate[py,"from numpy import histogram"];
 ExternalFunction[py,"lambda a, bins=10,range=None,normed=None,weights=None,density=None: histogram(a,bins=10,range=None,normed=None,weights=None,density=None)"]]
+
+
+nmfPY[X_, ncomps_:2]:=
+Module[{py, nmfs},
+(
+py = StartExternalSession["Python"];
+(*init*)
+ExternalEvaluate[py,"
+
+import numpy as np
+def assignme(name,var):
+	globals()[name] = var;
+
+import matplotlib;
+matplotlib.use('TkAgg');
+from matplotlib import pyplot as plt
+
+from sklearn.decomposition import NMF
+"];
+
+ExternalEvaluate[py,"assignme"]["X",NumericArray@X];
+ExternalEvaluate[py,"assignme"]["ncomps",ncomps];
+
+ExternalEvaluate[py,"
+model=NMF(n_components=ncomps,init='random',random_state=0)
+W=model.fit_transform(X)
+H=model.components_
+"];
+nmfs =ExternalEvaluate[py,"{'W':W,'H':H}"];
+
+Return[nmfs,Module];
+DeleteObject[py];
+)
+];
 
 
 (* ::Section:: *)
@@ -785,14 +814,17 @@ diskRoiMask[srcImage_,diskXY_?ListQ, diskRadius_?NumberQ]:=
 
 (*we want to just get the points out, and then use highlight image for overlays*)
 logBlob[im_,\[Sigma]log :_?ListQ : {5,5}, thresh_:0.2, meanShiftRange_:5]:=
-Block[{logimage, maxima,pts,fig},
+Block[{logimage, maxima,masks,pts,fig},
 (
 logimage= im//Rescale//Image[LaplacianGaussianFilter[#,\[Sigma]log]*-(First@\[Sigma]log)^2]&;
 maxima=ImageMultiply[MaxDetect[logimage],Binarize[logimage,thresh]];
 pts = maxima;
 pts = ComponentMeasurements[maxima,"Centroid"][[All,2]];
 pts = Union[MeanShift[pts, meanShiftRange, MaxIterations -> 10]];
-fig = Echo@Show[{Sharpen[#,1]&@ImageAdjust@Image[#]&@Rescale@im,Graphics[{Orange,Disk[{#[[1]],#[[2]]},2.]}&/@pts]}];
+fig = Echo@Show[
+		{Sharpen[#,1]&@ImageAdjust@Image[#]&@Rescale@im,
+		Graphics[{Red,Opacity[1.0],Disk[{#[[1]],#[[2]]},1*Mean@ImageDimensions@logimage/300.]}&/@pts]}
+		];
  masks = ComponentMeasurements[Binarize[logimage,thresh],"Mask"];
  <|"centroids"-> pts, "mask"->masks, "image"->fig |>
 )]
@@ -832,6 +864,22 @@ fig = Echo@Show[{Sharpen[#,1]&@ImageAdjust@Image[#,op]&@Rescale@im,Graphics[{Ora
  masks = ComponentMeasurements[Binarize[logimage,thresh],"Mask"]
 )]
 
+
+
+logBlobScaler[im_Image, scaleRange_:Range[.5,50.,.5], binarizeScale_:0.1]:=
+Module[{ scales},
+scales = Flatten@Table[
+im//
+LaplacianGaussianFilter[#,logParm]&//
+ImageData//
+Rescale//
+Image//
+Binarize[#]&//
+ComponentMeasurements[#,"Centroid", #Area>.5&]&//
+Dimensions@#&,{logParm,scaleRange}];
+Echo@ListLinePlot[Transpose[{scaleRange,scales}],PlotRange->All, ScalingFunctions->"Log", plotStylePhys["scale, arb. u.","connected components"]];
+scales
+]
 
 
 (* ::Subsection:: *)
@@ -984,11 +1032,13 @@ makeStack[data_, chan_:"G"] :=
 	MapThread[Transpose[{#1,#2}]&,#]&
 	];
 
-plotStack[stk_,chan_:"C"]:=
+plotStack[stk_,chan_:"C", op:OptionsPattern[ListLinePlot]]:=
 	Block[{vvec,yerror},(
 		vvec =(First@Transpose[#]&/@stk)//First;
 		yerror = (Last@Transpose[#]&/@stk)//{Mean@#,StandardDeviation@#}&//MapThread[Around[#1,#2]&,#]&;
-		ListLinePlot[Transpose[{vvec,yerror}],PlotRange->All, Axes->False,Frame->True, plotStyle[], FrameLabel->{"bias, V","\[CapitalDelta]smim" <>chan<>", arb. u."}])
+		Echo@ListLinePlot[Transpose[{vvec,yerror}], plotStylePhys["bias, V","\[CapitalDelta]smim" <>chan<>", arb. u."]];
+		Transpose[{vvec,yerror}]
+		)
 	];
 
 parseSwitchingSpec[data_,bias_]:=
@@ -1010,7 +1060,7 @@ parseSwitchingSpec[data_,bias_]:=
 datum= parseSwitchingSpec[#,dAssc@"bias"]&/@dAssc@"chan1";
 stack["G"] = datum//makeStack[#, "G"]&/@#&//Flatten[#,1]&;
 stack["C"] = datum//makeStack[#, "C"]&/@#&//Flatten[#,1]&;
-stack["plots"] = Echo@plotStack[stack[#],#]&/@{"G","C"};
+stack["plots"] = plotStack[stack[#],#]&/@{"G","C"};
 stack
 )];
 
