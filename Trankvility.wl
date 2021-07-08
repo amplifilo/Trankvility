@@ -4,7 +4,7 @@ AppendTo[$Path,NotebookDirectory[]];
 
 
 (* ::Code::Initialization::GrayLevel[0]:: *)
-BeginPackage["Calme`",{"ExtFunc`","OOP`"}];
+BeginPackage["Trankvility`",{"OOP`"}];
 
 
 NotebookDirectory[]
@@ -17,9 +17,9 @@ Today
 
 
 (* ::Code::Initialization::GrayLevel[0]:: *)
-Unprotect["Calme`*"];
-ClearAll["Calme`*"];
-ClearAll["Calme`Private`*"];
+Unprotect["Trankvility`*"];
+ClearAll["Trankvility`*"];
+ClearAll["Trankvility`Private`*"];
 
 
 (* ::Subsection:: *)
@@ -1075,13 +1075,13 @@ stack
 
 
 Scan[SetAttributes[#, {Protected, ReadProtected}]&,
-     Select[Symbol /@ Names["Calme`*"], Head[#] === Symbol &]];
+     Select[Symbol /@ Names["Trankvility`*"], Head[#] === Symbol &]];
 
 
 End[];
 
 
-Protect["Calme`*"];
+Protect["Trankvility`*"];
 
 
 EndPackage[]

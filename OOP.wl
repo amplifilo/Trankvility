@@ -236,7 +236,7 @@ gridClass[inst_Symbol, s:(_?AssociationQ):<||>] :=
 			ndiv = inst[chan]//
 					Normal//
 					Flatten[#,1]&//
-					Calme`denoise[3][#]&//
+					Trankvility`denoise[3][#]&//
 					Normal//
 					DerivativeFilter[#,{0,1},1]&//
 					Map[#/dx&,#]&//
@@ -335,7 +335,7 @@ gridClassH5[inst_Symbol, s:(_?AssociationQ):<||>] :=
 			ndiv = inst[chan]//
 					Normal//
 					Flatten[#,1]&//
-					Calme`denoise[3][#]&//
+					Trankvility`denoise[3][#]&//
 		(Echo@"denoised";#)&//
 					Normal//
 					DerivativeFilter[#,{0,1},1]&//
@@ -510,7 +510,7 @@ planeSubtract[zArr_]:=
 Block[{zloc=Normal@zArr, planeDir, zIJ},
 	(
 	zIJ = zloc//
-			{Calme`meshgrid[Range@First@Dimensions@#,Range@Last@Dimensions@#],
+			{Trankvility`meshgrid[Range@First@Dimensions@#,Range@Last@Dimensions@#],
 			Flatten@#}&//
 			Transpose//
 			Flatten/@#&;
