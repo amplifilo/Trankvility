@@ -70,6 +70,13 @@ Module[{h5types},
 	inst/:Dot[inst, "saveH5"[h5name_:inst[]["h5file"]]]:= EchoTiming@Export[h5name,
 		Map[If[MatchQ[Head@#, List]||MatchQ[Head@#, NumericArray],#, Compress@#]&, inst[]]//Normal, "Datasets",
 		OverwriteTarget-> "Append","AppendMode"-> "Overwrite"];
+		
+	inst/:Dot[inst, "recallH5"[h5name_:inst[]["h5file"]]]:= 
+		h5name//
+		Import[#]&//
+		!MemberQ[{"/h5file","/parent"},#]&/@#&//
+		Pick[Import[h5name], #]&//
+		inst[StringDelete[#,"/"]]&/@#&;
 	
 	inst/:Head[inst]="class";
 	inst/:Values[inst]:=Values@inst[];

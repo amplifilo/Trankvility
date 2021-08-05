@@ -7,12 +7,6 @@ AppendTo[$Path,NotebookDirectory[]];
 BeginPackage["Trankvility`",{"OOP`"}];
 
 
-NotebookDirectory[]
-
-
-NotebookFileName[]
-
-
 Today
 
 
@@ -113,6 +107,10 @@ addLabel::usage="labels a graphics object, allowing offsets and custom labels";
 logBlobScaler::usage="scaled blob transformation";
 tabbedNotebook::usage="create new tabbed notebook";
 nmfPY::usage="NMF algo from scikit-learn";
+kpcaPY::usage="kernel PCA alog from scikit-learn";
+pyBgEstimate::usage="phoutils background estimator (via astropy)";
+netMF::usage="matrix factorization using NN architecture";
+
 
 
 (* ::Subsection:: *)
@@ -643,6 +641,31 @@ meshgrid[x__?VectorQ] := Transpose[Reverse[Transpose[Tuples[Reverse[{x}]]]]]
 
 
 (* ::Section:: *)
+(*Matrix factorization*)
+
+
+netMF[data_,ncomps_, trainingTime_:2.]:=
+Module[{nmfLayerNoBias, net,netTrained, W, H, dimX=Last@Dimensions@data, enc},
+{
+
+nmfLayerNoBias[inputDim_, outputDim_] :=FunctionLayer[Dot[#Input, Abs@NetArray[<|"Name"-> "Weights", "Dimensions"-> {inputDim,outputDim}|>]]&];
+
+net = NetGraph[{Ramp,50,Tanh ,numComps,nmfLayerNoBias[numComps,dimX],MeanSquaredLossLayer[]},{1 -> 2 -> 3 -> 4 -> 5  ->  NetPort["Output"],5 -> NetPort[6, "Input"], NetPort["Input"] -> NetPort[6, "Target"]},  "Input" -> dimX,"Output" -> dimX  ];
+
+netTrained = NetTrain[net, <|"Input" -> Normal@data|>, LossFunction -> "Loss",
+TrainingProgressReporting->None, ValidationSet->Scaled[0.2], TimeGoal->trainingTime];
+
+enc = netTrained//
+Take[#,{NetPort["Input"],NetPort["Output"]}]&//
+Take[trained,{NetPort["Input"],4}]&;
+W = enc@ndiv;
+H = NetExtract[netTrained,5]//Normal//#Net&//Normal//First//Normal//#Array&//Abs//Normal;
+Return[<|"W"-> W, "H"->H|>, Module];
+}
+]
+
+
+(* ::Section:: *)
 (*Pythonic functions*)
 
 
@@ -726,6 +749,67 @@ H=model.components_
 nmfs =ExternalEvaluate[py,"{'W':W,'H':H}"];
 
 Return[nmfs,Module];
+DeleteObject[py];
+)
+];
+
+
+kpcaPY[X_, ncomps_:2, kernel_:"linear"]:=
+Module[{py, nmfs},
+(
+py = StartExternalSession["Python"];
+(*init*)
+ExternalEvaluate[py,"
+
+import numpy as np
+def assignme(name,var):
+	globals()[name] = var;
+from sklearn.decomposition import KernelPCA
+"];
+Map[ExternalEvaluate[py,"assignme"]@@Sequence@#&,
+{{"X",NumericArray@X},
+{"ncomps",ncomps},
+{"ker",kernel}}];
+
+ExternalEvaluate[py,"
+transformer = KernelPCA(n_components=ncomps, kernel=ker)
+X_transformed = transformer.fit_transform(X)
+"];
+
+Return[ExternalEvaluate[py,"X_transformed"],Module];
+DeleteObject[py];
+)
+];
+
+
+pyBgEstimate[X_, window_:{50,50}, filterSize_:{2,2}]:=
+Module[{py},
+(
+py = StartExternalSession["Python"];
+(*init*)
+
+ExternalEvaluate[py,"
+import numpy as np
+from astropy.stats import SigmaClip
+from photutils.background import Background2D, MeanBackground, MedianBackground
+def assignme(name,var):
+	globals()[name] = var;
+"];
+
+Map[ExternalEvaluate[py,"assignme"]@@Sequence@#&,
+{{"X",NumericArray@X},
+{"window",window},
+{"filter_size",filterSize}}];
+
+ExternalEvaluate[py,"
+sigma_clip = SigmaClip(sigma=3.0)
+bkg_estimator = MedianBackground();
+bkg_median = Background2D(X, window, filter_size=filter_size, sigma_clip=sigma_clip, bkg_estimator=bkg_estimator);
+bkg_estimator = MeanBackground();
+bkg_mean = Background2D(X, window, filter_size=filter_size, sigma_clip=sigma_clip, bkg_estimator=bkg_estimator);
+"];
+
+Return[ExternalEvaluate[py,"{'mean':bkg_mean.background,'median':bkg_median.background}"],Module];
 DeleteObject[py];
 )
 ];
@@ -821,7 +905,7 @@ maxima=ImageMultiply[MaxDetect[logimage],Binarize[logimage,thresh]];
 pts = maxima;
 pts = ComponentMeasurements[maxima,"Centroid"][[All,2]];
 pts = Union[MeanShift[pts, meanShiftRange, MaxIterations -> 10]];
-fig = Echo@Show[
+fig = Show[
 		{Sharpen[#,1]&@ImageAdjust@Image[#]&@Rescale@im,
 		Graphics[{Red,Opacity[1.0],Disk[{#[[1]],#[[2]]},1*Mean@ImageDimensions@logimage/300.]}&/@pts]}
 		];
