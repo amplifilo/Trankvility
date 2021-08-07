@@ -754,6 +754,43 @@ DeleteObject[py];
 ];
 
 
+nmfPY[X_, ncomps_:2, py_:None]:=
+Module[{pySession, nmfs},
+(
+pySession = If[MatchQ[py, None],
+	Echo@StartExternalSession["Python"],
+	py];
+	
+(*init*)
+ExternalEvaluate[pySession,"
+
+import numpy as np
+def assignme(name,var):
+	globals()[name] = var;
+
+import matplotlib;
+matplotlib.use('TkAgg');
+from matplotlib import pyplot as plt
+
+from sklearn.decomposition import NMF
+"];
+
+ExternalEvaluate[pySession,"assignme"]["X",NumericArray@X];
+ExternalEvaluate[pySession,"assignme"]["ncomps",ncomps];
+
+ExternalEvaluate[pySession,"
+model=NMF(n_components=ncomps,init='random',random_state=0)
+W=model.fit_transform(X)
+H=model.components_
+"];
+nmfs =ExternalEvaluate[pySession,"{'W':W,'H':H}"];
+
+Return[nmfs,Module];
+If[!MatchQ[py, None], DeleteObject[pySession]];
+)
+];
+
+
 kpcaPY[X_, ncomps_:2, kernel_:"linear"]:=
 Module[{py, nmfs},
 (
