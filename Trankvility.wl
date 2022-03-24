@@ -650,17 +650,17 @@ Module[{nmfLayerNoBias, net,netTrained, W, H, dimX=Last@Dimensions@data, enc},
 
 nmfLayerNoBias[inputDim_, outputDim_] :=FunctionLayer[Dot[#Input, Abs@NetArray[<|"Name"-> "Weights", "Dimensions"-> {inputDim,outputDim}|>]]&];
 
-net = NetGraph[{Ramp,50,Tanh ,numComps,nmfLayerNoBias[numComps,dimX],MeanSquaredLossLayer[]},{1 -> 2 -> 3 -> 4 -> 5  ->  NetPort["Output"],5 -> NetPort[6, "Input"], NetPort["Input"] -> NetPort[6, "Target"]},  "Input" -> dimX,"Output" -> dimX  ];
+net = NetGraph[{Ramp,50,Tanh ,ncomps,nmfLayerNoBias[ncomps,dimX],MeanSquaredLossLayer[]},{1 -> 2 -> 3 -> 4 -> 5  ->  NetPort["Output"],5 -> NetPort[6, "Input"], NetPort["Input"] -> NetPort[6, "Target"]},  "Input" -> dimX,"Output" -> dimX  ];
 
 netTrained = NetTrain[net, <|"Input" -> Normal@data|>, LossFunction -> "Loss",
 TrainingProgressReporting->None, ValidationSet->Scaled[0.2], TimeGoal->trainingTime];
 
 enc = netTrained//
 Take[#,{NetPort["Input"],NetPort["Output"]}]&//
-Take[trained,{NetPort["Input"],4}]&;
-W = enc@ndiv;
+Take[netTrained,{NetPort["Input"],4}]&;
+W = enc@data;
 H = NetExtract[netTrained,5]//Normal//#Net&//Normal//First//Normal//#Array&//Abs//Normal;
-Return[<|"W"-> W, "H"->H|>, Module];
+Return[<|"W"-> NumericArray@W, "H"-> NumericArray@H|>, Module];
 }
 ]
 
