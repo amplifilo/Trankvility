@@ -754,6 +754,31 @@ DeleteObject[py];
 ];
 
 
+nmfPY[X_, ncomps_:2, py_:None]:=
+Module[{},
+(
+(*init*)
+ExternalEvaluate[py,"
+
+import numpy as np
+def assignme(name,var):
+	globals()[name] = var;
+from sklearn.decomposition import NMF
+"];
+
+ExternalEvaluate[py,"assignme"]["X",NumericArray@X];
+ExternalEvaluate[py,"assignme"]["ncomps",ncomps];
+
+ExternalEvaluate[py,"
+model=NMF(n_components=ncomps,init='random',random_state=0)
+W=model.fit_transform(X)
+H=model.components_
+"];
+ExternalEvaluate[py,"{'W':W,'H':H}"]//Return[#,Module]&;
+)
+];
+
+
 kpcaPY[X_, ncomps_:2, kernel_:"linear"]:=
 Module[{py, nmfs},
 (
