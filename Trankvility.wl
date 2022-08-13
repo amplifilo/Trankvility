@@ -110,7 +110,7 @@ nmfPY::usage="NMF algo from scikit-learn";
 kpcaPY::usage="kernel PCA alog from scikit-learn";
 pyBgEstimate::usage="phoutils background estimator (via astropy)";
 netMF::usage="matrix factorization using NN architecture";
-
+pyFunc::usage="call python function with either direct variables, list or key-value pairs"
 
 
 (* ::Subsection:: *)
@@ -667,6 +667,16 @@ Return[<|"W"-> NumericArray@W, "H"-> NumericArray@H|>, Module];
 
 (* ::Section:: *)
 (*Pythonic functions*)
+
+
+pyFunc[py_,func_]:=ExternalFunction[py,func];
+pyFunc[py_,func_,parms_]:=
+Switch[
+Head@parms,
+List,ExternalFunction[py,"lambda parm: "<>func<>"(*parm)"]@parms,
+Association,ExternalFunction[py,"lambda parm: "<>func<>"(**parm)"]@parms,
+_,ExternalFunction[py,func]
+];
 
 
 pyF[py_] := ExternalEvaluate[py, #]&;
