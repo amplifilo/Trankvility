@@ -3,8 +3,14 @@
 AppendTo[$Path,NotebookDirectory[]];
 
 
+NotebookDirectory[]
+
+
+(*Needs["OOP`"]*)
+
+
 (* ::Code::Initialization::GrayLevel[0]:: *)
-BeginPackage["Trankvility`",{"OOP`"}];
+BeginPackage["Trankvility`",{"Trankvility`OOP`"}];
 
 
 Today
@@ -21,8 +27,6 @@ ClearAll["Trankvility`Private`*"];
 
 
 (* ::Code::Initialization::GrayLevel[0]:: *)
-fftshift::usage = "Center Fourier transform (phase-preserving)";
-ifftshift::usage = "Uncenter Fourier transform (phase-preserving)";
 imageCenter::usage = "Return coordinates of image center";
 hannWindow::usage = "Return 2D Hann window (useful for FFT)";
 plotRanger::usage = "Automatically adjust contrast within nsigma deviations of the mean";
@@ -110,7 +114,14 @@ nmfPY::usage="NMF algo from scikit-learn";
 kpcaPY::usage="kernel PCA alog from scikit-learn";
 pyBgEstimate::usage="phoutils background estimator (via astropy)";
 netMF::usage="matrix factorization using NN architecture";
-
+fftDemod::usage="frequency demodulation of fft -> amplitude-modeulated image ";
+pyHamming2D::usage ="numpy implementation of Hamming window for arbitrary aspect ratio";
+planeSubtractIndexed::usage="subtract with linear plane fitting. Can be easily; extended to polynomial fit";
+saveTape::usage="save tape variable to h5";
+associationToGraph::usage="view keys of nested associations as graph";
+pyAssign::usage="send variables from WL to specific python session";
+blurSubtract::usage="subtract blurred image from the given one. Good for quick background correction";
+notebookSearch::usage="find recent notebooks"
 
 
 (* ::Subsection:: *)
@@ -137,8 +148,6 @@ pySciKit::usage ="Portal to scikits clustering and dimension reduction functiona
 
 numPartitions::usage = "Find how many image partitions one will get from a given image";
 meshGrid::usage = "Replicates numpy's meshgrid function";
-bgSubtract::usage = "Subtract polynomial background. Returns NumericArray. Good for 
-						direct plug into ImageAdjust@Image@Normal@#";
 pyHistogram::usage = "numpy function for histogram. Not sure it's really faster";
 diskRoiMask::usage = "create a disk matrix around a specific pixel in the image. Returns mask, that when flattened can be applied directly to hypespectral
 data-set via Pick";
@@ -197,6 +206,27 @@ pipe = RightComposition;
 reveal = GeneralUtilities`PrintDefinitions;
 
 
+ClearAll["saveTape*"];
+saveTape[h5name_:(NotebookFileName[]<>".tape.h5")]:=
+Module[{},
+(
+If[NameQ["tape"],
+Export[h5name,
+Normal@
+Select[tape,
+Or[
+ListQ@#,
+ArrayQ@#,
+NumericArrayQ@#,
+StringQ@#
+]&],
+"Datasets"],
+Print@"no tape found"
+]
+)
+]
+
+
 (* ::Section:: *)
 (*Aux*)
 
@@ -215,8 +245,17 @@ tabbedNotebook[name_:"note1", tabs_:6, tabnames:"fig"] := Module[{n1},
 ];
 
 
+SetAttributes[associationToGraph,HoldAll];
+associationToGraph[a_]:=Module[{toGraph,data},toGraph[b_]:={KeyValueMap[{key,value}|->If[AssociationQ[value],{Map[x|->DirectedEdge[key,x],Keys[value]],toGraph[value]},{}],b]};
+data=Flatten[{Map[x|->DirectedEdge[ToString[Unevaluated[a]],x],Keys[a]],toGraph[a]}];
+Graph[data,VertexLabels->"Name",GraphLayout->Automatic, PlotTheme->"LargeGraph"]]/;AssociationQ[a]
+
+
 (* ::Section:: *)
 (*Save/Retrieve notebook*)
+
+
+notebookSearch[dir_String,age_?NumericQ]:=Select[FileNames["*.nb",{dir},Infinity],First[DateDifference[FileDate[#],DateList[],"Day"]]<=age&]
 
 
 SetAttributes[saveState,HoldAll];
@@ -359,15 +398,15 @@ reportCore[grd_?AssociationQ]:=
 	Block[{attrs=grd["header"]},
 	(attrs["bias"] = {Min@#, Max@#}&@grd["sweep_signal"];
 	attrs["chanPlot"]= Grid[{{ListPlot[Transpose[{Normal@grd["sweep_signal"],#}]&/@#]&@RandomSample[Flatten[Normal@grd["Current (A)"],1],10],
-	ImageAdjust@Image@bgSubtract@grd["topo"]}}];
-	NiceGridDark@KeyDrop[attrs,
+	ImageAdjust@(blurSubtract)@Image@grd["topo"]}}];
+	ResourceFunction["NiceGrid"]@KeyDrop[attrs,
 		{"num_parameters", "measure_delay","experiment_size","experimental_parameters","fixed_parameters"}])];
 
 reportChans[grd_?AssociationQ]:=
 	Block[{reportGrid},(
 		reportGrid =KeyTake[grd,Complement[Keys@grd,{"params","Z (m)","sweep_signal", "header"}]];
-		NiceGridDark@Partition[#,3]&@(If[#=="topo",
-		Labeled[ImageAdjust@Image@bgSubtract@reportGrid[#],"topo",Top],
+		ResourceFunction["NiceGrid"]@Partition[#,3]&@(If[#=="topo",
+		Labeled[ImageAdjust@(blurSubtract)@Image@reportGrid[#],"topo",Top],
 		MatrixPlot[Part[reportGrid[#],All,All,2],PlotLabel->#]]&/@Keys@reportGrid
 	))];
 (*Pick[Keys@reportGrid,Values@(Length@Dimensions@#&/@reportGrid),_?(#\[Equal]3&)]*)
@@ -450,11 +489,11 @@ plotStyle[framethick_:0.004] :=
 	PlotStyle->Directive[Thickness[2 framethick]], 
 	Frame->True, 
 	FrameStyle->Directive[ Thickness[framethick]],
-	ImageSize->300,
+	ImageSize->Automatic->250,
 	PlotRange->All, 
 	AspectRatio->1.0, 
-	GridLines->Automatic,
-	GridLinesStyle->Directive[Gray, Thickness[framethick/10]]
+	GridLines->None
+	(*GridLinesStyle->Directive[Gray, Thickness[framethick/10]]*)
 	};
 
 
@@ -579,6 +618,9 @@ Module[{histDim, plotMod, histPlots,xx},(
 
 
 
+blurSubtract[im_, blur_:20]:=im//Blur[#,blur]&//ImageSubtract[im,#]&//ImageAdjust
+
+
 (* ::Section:: *)
 (*FFT*)
 
@@ -595,9 +637,20 @@ ifftshift[dat_?ArrayQ,k:(_Integer?Positive|All):All]:=Module[{dims=Dimensions[da
 imageCenter[im_?ImageQ] := Floor@Dimensions@ImageData@im/2.;
 
 
+hamming2D[dims_]:=
+Module[{wnd},
+(
+wnd=N@Array[HammingWindow,#,{-.5,.5}]&/@dims;
+wnd=Outer[Times,wnd[[1]],wnd[[2]]]
+)
+]
+
+
 (* ::Code::Initialization::GrayLevel[0]:: *)
-hannWindow[im_?ArrayQ] := Block[{w,h,hg,wg}, {w,h} = Dimensions@im; {hg, wg} = meshGrid[Range[h],Range[w]]; 
-									Times[HannWindow[hg/h-0.5],HannWindow[wg/w-0.5]]];
+hannWindow[im_?ArrayQ] := Block[{w,h,hg,wg}, 
+				{w,h} = Dimensions@im; 
+				{hg, wg} = meshgrid[Range[h],Range[w]]; 
+				Times[HannWindow[hg/h-0.5],HannWindow[wg/w-0.5]]];
 
 
 (* ::Code::Initialization::GrayLevel[0]:: *)
@@ -636,8 +689,29 @@ baseFFT[im_?ArrayQ] :=  Block[{hw,imC},
 numPartitions[im_?ArrayQ, pWidth_?ListQ, pStride_?ListQ] := Floor[(Dimensions[im][[#]]-pWidth[[#]])/pStride[[#]] +1]&/@Range@Length@Dimensions@im ;
 
 
+meshgrid[x_List,y_List]:={ConstantArray[x,Length[x]],Transpose@ConstantArray[y,Length[y]]}
+
+
 (* ::Code::Initialization::GrayLevel[0]:: *)
-meshgrid[x__?VectorQ] := Transpose[Reverse[Transpose[Tuples[Reverse[{x}]]]]]
+(*meshgrid[x__?VectorQ] := Transpose[Reverse[Transpose[Tuples[Reverse[{x}]]]]]*)
+
+
+ClearAll["fftDemod*"];
+fftDemod[imData_,shiftfft_:{0,0},fftCrop_:150]:=
+Module[{fft=<||>,plotted},
+(
+fft["data"] =imData;
+fft["fftCentered"] = fft["data"]//Fourier//fftshift;
+
+fft["fftShifted"]=RotateRight[fft["fftCentered"],shiftfft];
+fft["filtered"]=fft["fftShifted"]//#*(GaussianFilter[#,12.]&@DiskMatrix[1,Dimensions@#])&//
+ifftshift//InverseFourier;
+plotted = MapThread[imData[#1,#2,300,#3]&,{fft//Values,{#&, Log@Abs@#&,Log@Abs@#&,Abs@#&},{Automatic,fftCrop,fftCrop,Automatic}}];
+plotted[[3]]=plotted[[3]]//Show[#,Graphics@{Red,Opacity[0.4],Disk[0.5 ImageDimensions@#,5] }]&;
+plotted;
+
+)
+];
 
 
 (* ::Section:: *)
@@ -667,6 +741,10 @@ Return[<|"W"-> NumericArray@W, "H"-> NumericArray@H|>, Module];
 
 (* ::Section:: *)
 (*Pythonic functions*)
+
+
+pyAssign[py_,varName_String,var_]:=ExternalFunction[py,"
+lambda name, var: globals().update({name:var})"][varName,var];
 
 
 pyF[py_] := ExternalEvaluate[py, #]&;
@@ -752,6 +830,23 @@ Return[nmfs,Module];
 DeleteObject[py];
 )
 ];
+
+
+pyHamming2D[im_]:=
+Module[{py,ham2d},
+(
+py = StartExternalSession["Python"];
+ham2d = ExternalEvaluate[py,"
+import numpy as np
+def hamming_window_2d(im):
+        hx = np.hamming(im.shape[0])
+        hy = np.hamming(im.shape[1])
+        return np.sqrt(np.outer(hx,hy))
+"];
+Return[ham2d[im]];
+DeleteObject[py];
+ )
+ ]
 
 
 nmfPY[X_, ncomps_:2, py_:None]:=
@@ -1005,6 +1100,16 @@ data \[Rule] same as standard, list of {{Subscript[x, i],Subscript[y, i]}}
 Block[{fitAssc},
 	(fitAssc = Merge[blocks,Flatten[#,1]&];
 	NonlinearModelFit[data,Join[List@Total@fitAssc["func"],fitAssc["constr"]],fitAssc["guess"],x2])];
+
+
+planeSubtractIndexed[im_List]:=
+Module[{indexed, x,y,pfit,bgg,aa,bb,cc},
+(
+indexed = im//Table[{i,j, #[[i,j]]},{i,First@Dimensions@#},{j,Last@Dimensions@#}]&//Flatten[#,1]&;
+pfit = indexed//RandomSample[#,1000]&//FindFit[#,aa+bb x+cc y,{aa,bb,cc},{x,y}]&;
+bgg = Table[(aa+bb i+cc j)/.pfit,{i,First@Dimensions@im},{j,Last@Dimensions@im}];
+im-bgg
+)]
 
 
 (* ::Subsubsection:: *)
