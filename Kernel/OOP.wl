@@ -1,5 +1,8 @@
 (* ::Package:: *)
 
+AppendTo[$Path,NotebookDirectory[]];
+
+
 BeginPackage["OOP`"];
 
 
@@ -476,7 +479,7 @@ imageTest/:Dot[imageTest[im_],"compressibility"[cRange_:Range[-3,3,0.1]]]:=
 Block[{zArrIJ, indArray,subIndArray,subZArray,bgFit,bg,xx,yy,a2,b2,a1,b1,c1,x,y},
 (
 	indArray =zArr//MapIndexed[Last,#,{2}]&//Flatten[#,1]&;
-	
+	////im3=im3 =
 	subIndArray = indArray//
 			Take[#,{1,-1,IntegerPart@(Length@indArray/300)}]&
 	
