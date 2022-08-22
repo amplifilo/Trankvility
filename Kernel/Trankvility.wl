@@ -114,7 +114,8 @@ nmfPY::usage="NMF algo from scikit-learn";
 kpcaPY::usage="kernel PCA alog from scikit-learn";
 pyBgEstimate::usage="phoutils background estimator (via astropy)";
 netMF::usage="matrix factorization using NN architecture";
-
+pyFunc::usage="flexible loading of the python functions";
+pyAssign::usage="inject variables and associations(->dict) into a chosen python environment";
 
 
 (* ::Subsection:: *)
@@ -734,6 +735,20 @@ Return[<|"W"-> NumericArray@W, "H"-> NumericArray@H|>, Module];
 
 (* ::Section:: *)
 (*Pythonic functions*)
+
+
+pyAssign[py_,varName_String,var_]:=ExternalFunction[py,"
+lambda name, var: globals().update({name:var})"][varName,var];
+
+
+pyFunc[py_,func_]:=ExternalFunction[py,func];
+pyFunc[py_,func_,parms_]:=
+Switch[
+Head@parms,
+List,ExternalFunction[py,"lambda parm: "<>func<>"(*parm)"]@parms,
+Association,ExternalFunction[py,"lambda parm: "<>func<>"(**parm)"]@parms,
+_,ExternalFunction[py,func]
+];
 
 
 pyF[py_] := ExternalEvaluate[py, #]&;
