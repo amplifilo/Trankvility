@@ -114,14 +114,8 @@ nmfPY::usage="NMF algo from scikit-learn";
 kpcaPY::usage="kernel PCA alog from scikit-learn";
 pyBgEstimate::usage="phoutils background estimator (via astropy)";
 netMF::usage="matrix factorization using NN architecture";
-fftDemod::usage="frequency demodulation of fft -> amplitude-modeulated image ";
-pyHamming2D::usage ="numpy implementation of Hamming window for arbitrary aspect ratio";
-planeSubtractIndexed::usage="subtract with linear plane fitting. Can be easily; extended to polynomial fit";
-saveTape::usage="save tape variable to h5";
-associationToGraph::usage="view keys of nested associations as graph";
-pyAssign::usage="send variables from WL to specific python session";
-blurSubtract::usage="subtract blurred image from the given one. Good for quick background correction";
-notebookSearch::usage="find recent notebooks"
+pyFunc::usage="flexible loading of the python functions";
+pyAssign::usage="inject variables and associations(->dict) into a chosen python environment";
 
 
 (* ::Subsection:: *)
@@ -745,6 +739,16 @@ Return[<|"W"-> NumericArray@W, "H"-> NumericArray@H|>, Module];
 
 pyAssign[py_,varName_String,var_]:=ExternalFunction[py,"
 lambda name, var: globals().update({name:var})"][varName,var];
+
+
+pyFunc[py_,func_]:=ExternalFunction[py,func];
+pyFunc[py_,func_,parms_]:=
+Switch[
+Head@parms,
+List,ExternalFunction[py,"lambda parm: "<>func<>"(*parm)"]@parms,
+Association,ExternalFunction[py,"lambda parm: "<>func<>"(**parm)"]@parms,
+_,ExternalFunction[py,func]
+];
 
 
 pyAssign[var_]:=ExternalFunction[
