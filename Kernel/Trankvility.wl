@@ -116,6 +116,7 @@ pyBgEstimate::usage="phoutils background estimator (via astropy)";
 netMF::usage="matrix factorization using NN architecture";
 pyFunc::usage="flexible loading of the python functions";
 pyAssign::usage="inject variables and associations(->dict) into a chosen python environment";
+pyF::usage="a very flexible function and variable injector."
 
 
 (* ::Subsection:: *)
@@ -735,6 +736,22 @@ Return[<|"W"-> NumericArray@W, "H"-> NumericArray@H|>, Module];
 
 (* ::Section:: *)
 (*Pythonic functions*)
+
+
+pyF/:Dot[pyF,command_String]:=ExternalEvaluate[ExternalSessions[][[1]],command];
+pyF/:Dot[pyF,command_String]:=ExternalEvaluate[ExternalSessions[][[1]],command];
+pyF[command_String][]:=ExternalEvaluate[ExternalSessions[][[1]],command];
+
+pyF/:Dot[pyF,{fname_String,args_List}]:=ExternalFunction[ExternalSessions[][[1]],"lambda args :"<>fname <> "(*args)"][args];
+pyF[fname_String][args_List]:=ExternalFunction[ExternalSessions[][[1]],"lambda args :"<>fname <> "(*args)"][args];
+pyF[fname_String][kwargs_Association]:=ExternalFunction[ExternalSessions[][[1]],"lambda kwargs :"<>fname <> "(**kwargs)"][kwargs];
+pyF[fname_String][args_List,kwargs_Association]:=ExternalFunction[ExternalSessions[][[1]],"lambda args, kwargs :"<>fname <> "(*args, **kwargs)"][args,kwargs];
+
+pyF/:Dot[pyF,{py_,command_String}]:=ExternalEvaluate[py,command];
+pyF[py_,command_String][]:=ExternalEvaluate[py,command];
+pyF[py_,fname_String][args_List]:=ExternalFunction[py,"lambda args :"<>fname <> "(*args)"][args];
+pyF[py_,fname_String][kwargs_Association]:=ExternalFunction[py,"lambda kwargs :"<>fname <> "(**kwargs)"][kwargs];
+pyF[py_,fname_String][args_List,kwargs_Association]:=ExternalFunction[py,"lambda args, kwargs :"<>fname <> "(*args, **kwargs)"][args,kwargs];
 
 
 pyAssign[py_,varName_String,var_]:=ExternalFunction[py,"
