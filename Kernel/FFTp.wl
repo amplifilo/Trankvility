@@ -3,6 +3,9 @@
 AppendTo[$Path,NotebookDirectory[]];
 
 
+NotebookDirectory[]
+
+
 BeginPackage["FFTp`"];
 
 

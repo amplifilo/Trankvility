@@ -747,6 +747,10 @@ pyAssign[py_,varName_String,var_]:=ExternalFunction[py,"
 lambda name, var: globals().update({name:var})"][varName,var];
 
 
+pyAssign[var_]:=ExternalFunction[
+ExternalSessions[][[1]],"lambda name, var: globals().update({name:var})"][SymbolName[Unevaluated@var],var];
+
+
 pyF[py_] := ExternalEvaluate[py, #]&;
 
 
